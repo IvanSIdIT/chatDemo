@@ -10,6 +10,7 @@ import {
 import { buildRagSystemPrompt, retrieveChunks } from "@/lib/rag";
 import {
   createSupabaseServerClient,
+  createSupabaseServiceClient,
   getAccessTokenFromRequest,
 } from "@/lib/supabase-server";
 
@@ -67,21 +68,15 @@ export const Route = createFileRoute("/api/chat")({
 
           if (userText) {
             try {
-              const chunks = await retrieveChunks(supabase, userText, {
-                threshold: 0.65,
-                limit: 3,
+              const ragSupabase = createSupabaseServiceClient();
+              const chunks = await retrieveChunks(ragSupabase, userText, {
+                rpcThreshold: 0,
+                appThreshold: 0.3,
+                limit: 5,
+                logLabel: "[api/chat]",
               });
 
-              console.log("[api/chat] RAG retrieved chunks:", {
-                count: chunks.length,
-                previews: chunks.map((chunk) => ({
-                  id: chunk.id,
-                  similarity: chunk.similarity,
-                  length: chunk.content.length,
-                  preview: chunk.content.slice(0, 160),
-                })),
-              });
-
+              console.log("[api/chat] Final RAG chunks used:", chunks.length);
               ragSystemPrompt = buildRagSystemPrompt(chunks);
             } catch (ragError) {
               console.error("[api/chat] RAG retrieval failed:", ragError);

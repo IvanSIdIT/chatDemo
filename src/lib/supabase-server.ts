@@ -18,6 +18,14 @@ function getSupabaseAnonKey(): string {
   return key;
 }
 
+function getSupabaseServiceKey(): string {
+  const key = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!key) {
+    throw new Error("Missing SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY.");
+  }
+  return key;
+}
+
 export function getAccessTokenFromRequest(request: Request): string | null {
   const authorization = request.headers.get("Authorization");
   if (!authorization?.startsWith("Bearer ")) {
@@ -34,6 +42,15 @@ export function createSupabaseServerClient(accessToken: string): SupabaseClient<
         Authorization: `Bearer ${accessToken}`,
       },
     },
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+}
+
+export function createSupabaseServiceClient(): SupabaseClient<Database> {
+  return createClient<Database>(getSupabaseUrl(), getSupabaseServiceKey(), {
     auth: {
       persistSession: false,
       autoRefreshToken: false,

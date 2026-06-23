@@ -24,6 +24,7 @@ from supabase import Client, create_client
 
 DOCS_DIR = Path(__file__).parent / "docs"
 EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_DIMENSIONS = 1536
 EMBED_BATCH_SIZE = 64
 INSERT_BATCH_SIZE = 25
 LLAMA_NUM_WORKERS = int(os.getenv("LLAMA_PARSE_WORKERS", "4"))
@@ -217,7 +218,11 @@ def embed_texts(client: OpenAI, texts: list[str]) -> list[list[float]]:
     embeddings: list[list[float]] = []
     for start in range(0, len(texts), EMBED_BATCH_SIZE):
         batch = texts[start : start + EMBED_BATCH_SIZE]
-        response = client.embeddings.create(model=EMBEDDING_MODEL, input=batch)
+        response = client.embeddings.create(
+            model=EMBEDDING_MODEL,
+            input=batch,
+            dimensions=EMBEDDING_DIMENSIONS,
+        )
         embeddings.extend(item.embedding for item in response.data)
 
     return embeddings
