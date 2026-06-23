@@ -35,3 +35,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python ingest
+__pycache__/
+*.py[cod]
+.venv/

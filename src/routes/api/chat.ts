@@ -7,6 +7,7 @@ import {
   getUIMessageText,
   saveEmployeeMessage,
 } from "@/lib/chat-persistence";
+import { buildRagSystemPrompt, retrieveChunks } from "@/lib/rag";
 import {
   createSupabaseServerClient,
   getAccessTokenFromRequest,
@@ -61,9 +62,26 @@ export const Route = createFileRoute("/api/chat")({
             }
           }
 
+          const modelMessages = await convertToModelMessages(messages);
+
+          if (userText) {
+            try {
+              const chunks = await retrieveChunks(supabase, userText, {
+                threshold: 0.75,
+                limit: 3,
+              });
+              modelMessages.unshift({
+                role: "system",
+                content: buildRagSystemPrompt(chunks),
+              });
+            } catch (ragError) {
+              console.error("[api/chat] RAG retrieval failed:", ragError);
+            }
+          }
+
           const result = streamText({
             model: openai("gpt-4o"),
-            messages: await convertToModelMessages(messages),
+            messages: modelMessages,
           });
 
           return result.toUIMessageStreamResponse({
