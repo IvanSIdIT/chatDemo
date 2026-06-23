@@ -63,6 +63,7 @@ export const Route = createFileRoute("/api/chat")({
           }
 
           const modelMessages = await convertToModelMessages(messages);
+          let ragSystemPrompt: string | undefined;
 
           if (userText) {
             try {
@@ -70,10 +71,7 @@ export const Route = createFileRoute("/api/chat")({
                 threshold: 0.75,
                 limit: 3,
               });
-              modelMessages.unshift({
-                role: "system",
-                content: buildRagSystemPrompt(chunks),
-              });
+              ragSystemPrompt = buildRagSystemPrompt(chunks);
             } catch (ragError) {
               console.error("[api/chat] RAG retrieval failed:", ragError);
             }
@@ -81,6 +79,7 @@ export const Route = createFileRoute("/api/chat")({
 
           const result = streamText({
             model: openai("gpt-4o"),
+            system: ragSystemPrompt,
             messages: modelMessages,
           });
 
