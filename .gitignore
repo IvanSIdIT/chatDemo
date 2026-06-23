@@ -40,3 +40,4 @@ dist-ssr
 __pycache__/
 *.py[cod]
 .venv/
+ingest.log

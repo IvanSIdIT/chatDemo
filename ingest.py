@@ -3,9 +3,10 @@
 Semantic-chunk PDF ingest for Supabase pgvector.
 
 Usage:
-  pip install -r requirements-ingest.txt
-  # Set OPENAI_API_KEY, SUPABASE_URL, SUPABASE_SECRET_KEY in .env
-  python ingest.py
+  npm run ingest
+  py -3 ingest.py
+  # Windows (if py fails):
+  %LOCALAPPDATA%\\Programs\\Python\\Python311\\python.exe ingest.py
 
 Place PDF instruction manuals in docs/ before running.
 """

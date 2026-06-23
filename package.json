@@ -14,7 +14,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "setup:supabase": "node scripts/finish-supabase-setup.mjs",
-    "setup:rag": "node --env-file=.env scripts/apply-rag-migration.mjs"
+    "setup:rag": "node --env-file=.env scripts/apply-rag-migration.mjs",
+    "ingest": "node --env-file=.env scripts/run-ingest.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.74",
