@@ -28,6 +28,7 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 EMBEDDING_DIM = 1536
 SIMILARITY_THRESHOLD = float(os.getenv("SEMANTIC_CHUNK_THRESHOLD", "0.83"))
 EMBED_BATCH_SIZE = 64
+INSERT_BATCH_SIZE = 25
 
 
 def require_env(name: str) -> str:
@@ -120,7 +121,25 @@ def semantic_chunk_sentences(
 
 
 def delete_source_chunks(supabase: Client, source: str) -> None:
-    supabase.table("document_chunks").delete().eq("metadata->>source", source).execute()
+    while True:
+        response = (
+            supabase.table("document_chunks")
+            .select("id")
+            .eq("metadata->>source", source)
+            .limit(INSERT_BATCH_SIZE)
+            .execute()
+        )
+        ids = [row["id"] for row in (response.data or [])]
+        if not ids:
+            return
+        supabase.table("document_chunks").delete().in_("id", ids).execute()
+
+
+def insert_chunk_batches(supabase: Client, rows: list[dict]) -> None:
+    for start in range(0, len(rows), INSERT_BATCH_SIZE):
+        batch = rows[start : start + INSERT_BATCH_SIZE]
+        supabase.table("document_chunks").insert(batch).execute()
+        print(f"  Inserted {min(start + len(batch), len(rows))}/{len(rows)} chunks...")
 
 
 def ingest_pdf(
@@ -146,6 +165,7 @@ def ingest_pdf(
         print(f"  Skipped {source}: no semantic chunks produced.")
         return 0
 
+    print(f"  Generated {len(semantic_chunks)} semantic chunks.")
     chunk_embeddings = embed_texts(client, semantic_chunks)
     delete_source_chunks(supabase, source)
 
@@ -164,7 +184,7 @@ def ingest_pdf(
         for index, (chunk, embedding) in enumerate(zip(semantic_chunks, chunk_embeddings, strict=True))
     ]
 
-    supabase.table("document_chunks").insert(rows).execute()
+    insert_chunk_batches(supabase, rows)
     print(f"  Stored {len(rows)} semantic chunks from {source}.")
     return len(rows)
 
