@@ -6,7 +6,6 @@ Usage:
   npm run ingest
   py -3 ingest.py
 
-Place PDFs in docs/ or set INGEST_PDF_PATH in .env (e.g. C:/Users/sidel/Desktop/ZOV.pdf).
 Requires: OPENAI_API_KEY, SUPABASE_SECRET_KEY, LLAMA_CLOUD_API_KEY
 """
 
@@ -25,10 +24,16 @@ from supabase import Client, create_client
 
 DOCS_DIR = Path(__file__).parent / "docs"
 EMBEDDING_MODEL = "text-embedding-3-small"
-SIMILARITY_THRESHOLD = float(os.getenv("SEMANTIC_CHUNK_THRESHOLD", "0.83"))
 EMBED_BATCH_SIZE = 64
 INSERT_BATCH_SIZE = 25
 LLAMA_NUM_WORKERS = int(os.getenv("LLAMA_PARSE_WORKERS", "4"))
+
+MIN_UNIT_CHARS = int(os.getenv("MIN_UNIT_CHARS", "40"))
+MIN_UNIT_WORDS = int(os.getenv("MIN_UNIT_WORDS", "5"))
+MIN_CHUNK_CHARS = int(os.getenv("MIN_CHUNK_CHARS", "80"))
+MIN_CHUNK_WORDS = int(os.getenv("MIN_CHUNK_WORDS", "12"))
+SEMANTIC_PERCENTILE = float(os.getenv("SEMANTIC_PERCENTILE", "95"))
+FIXED_SIMILARITY_FLOOR = float(os.getenv("SEMANTIC_SIMILARITY_FLOOR", "0.75"))
 
 
 def require_env(name: str) -> str:
@@ -38,12 +43,47 @@ def require_env(name: str) -> str:
     return value
 
 
+def word_count(text: str) -> int:
+    return len(re.findall(r"[\w\u0400-\u04FF]+", text, re.UNICODE))
+
+
 def create_llama_parser() -> LlamaParse:
     return LlamaParse(
         api_key=require_env("LLAMA_CLOUD_API_KEY"),
         result_type="markdown",
         num_workers=LLAMA_NUM_WORKERS,
     )
+
+
+def clean_markdown_text(text: str) -> str:
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"[^\S\n]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+
+    cleaned_lines: list[str] = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            cleaned_lines.append("")
+            continue
+        if re.fullmatch(r"[\W_\d]+", stripped):
+            continue
+        if len(stripped) == 1 and not stripped.isalnum():
+            continue
+        cleaned_lines.append(stripped)
+
+    return "\n".join(cleaned_lines).strip()
+
+
+def is_meaningful_text(text: str, *, min_chars: int, min_words: int) -> bool:
+    stripped = text.strip()
+    if len(stripped) < min_chars:
+        return False
+    if word_count(stripped) < min_words:
+        return False
+    if re.fullmatch(r"[\s\W\d]+", stripped):
+        return False
+    return True
 
 
 def extract_page_number(metadata: dict | None) -> int | None:
@@ -68,7 +108,8 @@ def parse_pdf_markdown(parser: LlamaParse, pdf_path: Path) -> list[dict]:
 
     pages: list[dict] = []
     for index, document in enumerate(documents):
-        text = (getattr(document, "text", None) or "").strip()
+        raw_text = getattr(document, "text", None) or ""
+        text = clean_markdown_text(raw_text)
         if not text:
             continue
 
@@ -106,29 +147,58 @@ def split_sentences(text: str) -> list[str]:
         return []
 
     parts = re.split(r"(?<=[.!?…])\s+(?=[A-ZА-ЯЁ0-9«\"(])", normalized)
-    sentences = [part.strip() for part in parts if part.strip()]
-    return sentences or [normalized]
+    sentences: list[str] = []
+    buffer = ""
+
+    for part in parts:
+        candidate = f"{buffer} {part}".strip() if buffer else part.strip()
+        if not candidate:
+            continue
+
+        if is_meaningful_text(candidate, min_chars=MIN_UNIT_CHARS, min_words=MIN_UNIT_WORDS):
+            sentences.append(candidate)
+            buffer = ""
+        else:
+            buffer = candidate
+
+    if buffer:
+        if sentences:
+            sentences[-1] = f"{sentences[-1]} {buffer}".strip()
+        elif is_meaningful_text(buffer, min_chars=MIN_UNIT_CHARS, min_words=MIN_UNIT_WORDS):
+            sentences.append(buffer)
+
+    return sentences
 
 
 def split_markdown_units(text: str) -> list[str]:
-    """Keep Markdown tables and figure captions intact; split prose into sentences."""
     blocks = re.split(r"\n{2,}", text.strip())
     units: list[str] = []
+    skipped = 0
 
     for block in blocks:
         cleaned = block.strip()
         if not cleaned:
             continue
 
-        if is_markdown_table(cleaned) or is_markdown_figure_block(cleaned):
-            units.append(cleaned)
+        if is_markdown_table(cleaned):
+            if is_meaningful_text(cleaned, min_chars=20, min_words=3):
+                units.append(cleaned)
+            else:
+                skipped += 1
             continue
 
-        if cleaned.startswith("#"):
-            units.append(cleaned)
+        if is_markdown_figure_block(cleaned) or cleaned.startswith("#"):
+            if is_meaningful_text(cleaned, min_chars=MIN_UNIT_CHARS, min_words=3):
+                units.append(cleaned)
+            else:
+                skipped += 1
             continue
 
-        units.extend(split_sentences(cleaned))
+        for sentence in split_sentences(cleaned):
+            units.append(sentence)
+
+    if skipped:
+        print(f"  Skipped {skipped} too-short markdown block(s).")
 
     return units
 
@@ -153,10 +223,18 @@ def embed_texts(client: OpenAI, texts: list[str]) -> list[list[float]]:
     return embeddings
 
 
+def compute_breakpoint_threshold(distances: list[float]) -> float:
+    if not distances:
+        return 1.0
+
+    percentile_threshold = float(np.percentile(distances, SEMANTIC_PERCENTILE))
+    fixed_distance = 1.0 - FIXED_SIMILARITY_FLOOR
+    return max(percentile_threshold, fixed_distance)
+
+
 def semantic_chunk_units(
     units: list[str],
     unit_embeddings: list[list[float]],
-    threshold: float,
 ) -> list[str]:
     if not units:
         return []
@@ -167,15 +245,24 @@ def semantic_chunk_units(
     if len(units) == 1:
         return [units[0]]
 
+    distances: list[float] = []
+    for index in range(1, len(units)):
+        previous = np.array(unit_embeddings[index - 1], dtype=np.float32)
+        current = np.array(unit_embeddings[index], dtype=np.float32)
+        distances.append(1.0 - cosine_similarity(previous, current))
+
+    breakpoint_threshold = compute_breakpoint_threshold(distances)
+    print(
+        f"  Semantic breakpoint threshold: {breakpoint_threshold:.4f} "
+        f"(percentile={SEMANTIC_PERCENTILE}, floor similarity={FIXED_SIMILARITY_FLOOR})",
+    )
+
     chunks: list[str] = []
     current_units = [units[0]]
 
     for index in range(1, len(units)):
-        previous = np.array(unit_embeddings[index - 1], dtype=np.float32)
-        current = np.array(unit_embeddings[index], dtype=np.float32)
-        similarity = cosine_similarity(previous, current)
-
-        if similarity < threshold:
+        distance = distances[index - 1]
+        if distance >= breakpoint_threshold:
             chunks.append("\n\n".join(current_units))
             current_units = [units[index]]
         else:
@@ -187,19 +274,59 @@ def semantic_chunk_units(
     return chunks
 
 
-def delete_source_chunks(supabase: Client, source: str) -> None:
+def merge_small_chunks(chunks: list[str]) -> list[str]:
+    if not chunks:
+        return []
+
+    merged: list[str] = [chunks[0]]
+    for chunk in chunks[1:]:
+        previous = merged[-1]
+        if not is_meaningful_text(previous, min_chars=MIN_CHUNK_CHARS, min_words=MIN_CHUNK_WORDS):
+            merged[-1] = f"{previous}\n\n{chunk}".strip()
+        elif not is_meaningful_text(chunk, min_chars=MIN_CHUNK_CHARS, min_words=MIN_CHUNK_WORDS):
+            merged[-1] = f"{previous}\n\n{chunk}".strip()
+        else:
+            merged.append(chunk)
+
+    return merged
+
+
+def filter_valid_chunks(chunks: list[str]) -> list[str]:
+    valid: list[str] = []
+    dropped = 0
+
+    for chunk in chunks:
+        normalized = chunk.strip()
+        if is_meaningful_text(normalized, min_chars=MIN_CHUNK_CHARS, min_words=MIN_CHUNK_WORDS):
+            valid.append(normalized)
+            print(f"  Created chunk length {len(normalized)} chars, {word_count(normalized)} words.")
+        else:
+            dropped += 1
+
+    if dropped:
+        print(f"  Dropped {dropped} invalid micro-chunk(s).")
+
+    return valid
+
+
+def truncate_document_chunks(supabase: Client) -> None:
+    print("Clearing document_chunks table...")
+    deleted = 0
+
     while True:
         response = (
             supabase.table("document_chunks")
             .select("id")
-            .eq("metadata->>source", source)
             .limit(INSERT_BATCH_SIZE)
             .execute()
         )
         ids = [row["id"] for row in (response.data or [])]
         if not ids:
-            return
+            break
         supabase.table("document_chunks").delete().in_("id", ids).execute()
+        deleted += len(ids)
+
+    print(f"Cleared {deleted} row(s) from document_chunks.")
 
 
 def insert_chunk_batches(supabase: Client, rows: list[dict]) -> None:
@@ -214,7 +341,6 @@ def ingest_pdf(
     supabase: Client,
     parser: LlamaParse,
     pdf_path: Path,
-    threshold: float,
 ) -> int:
     source = pdf_path.name
     print(f"Processing {source}...")
@@ -226,23 +352,33 @@ def ingest_pdf(
     for page_document in page_documents:
         page_number = page_document["page"]
         units = split_markdown_units(page_document["text"])
+        units = [
+            unit
+            for unit in units
+            if is_meaningful_text(unit, min_chars=MIN_UNIT_CHARS, min_words=MIN_UNIT_WORDS)
+            or is_markdown_table(unit)
+        ]
+
         if not units:
+            print(f"  Page {page_number}: no valid units after filtering.")
             continue
 
+        print(f"  Page {page_number}: {len(units)} valid unit(s) for semantic chunking.")
         unit_embeddings = embed_texts(openai_client, units)
-        page_chunks = semantic_chunk_units(units, unit_embeddings, threshold)
+        page_chunks = semantic_chunk_units(units, unit_embeddings)
+        page_chunks = merge_small_chunks(page_chunks)
+        page_chunks = filter_valid_chunks(page_chunks)
 
         for chunk in page_chunks:
             semantic_chunks.append(chunk)
             chunk_pages.append(page_number)
 
     if not semantic_chunks:
-        print(f"  Skipped {source}: no semantic chunks produced.")
+        print(f"  Skipped {source}: no valid semantic chunks produced.")
         return 0
 
-    print(f"  Generated {len(semantic_chunks)} semantic chunks.")
+    print(f"  Generated {len(semantic_chunks)} valid semantic chunk(s).")
     chunk_embeddings = embed_texts(openai_client, semantic_chunks)
-    delete_source_chunks(supabase, source)
 
     rows = [
         {
@@ -253,7 +389,9 @@ def ingest_pdf(
                 "chunk_index": index,
                 "chunk_count": len(semantic_chunks),
                 "page": chunk_pages[index],
-                "similarity_threshold": threshold,
+                "char_count": len(chunk),
+                "word_count": word_count(chunk),
+                "semantic_percentile": SEMANTIC_PERCENTILE,
                 "embedding_model": EMBEDDING_MODEL,
                 "parser": "llama-parse",
                 "result_type": "markdown",
@@ -302,7 +440,7 @@ def main() -> int:
     if not pdf_files:
         print(
             f"No PDF files found. Add files to {DOCS_DIR} "
-            "or set INGEST_PDF_PATH in .env (e.g. C:/Users/sidel/Desktop/ZOV.pdf).",
+            "or set INGEST_PDF_PATH in .env.",
         )
         return 1
 
@@ -310,17 +448,13 @@ def main() -> int:
     supabase = create_client(supabase_url, supabase_key)
     parser = create_llama_parser()
 
+    truncate_document_chunks(supabase)
+
     total_chunks = 0
     for pdf_path in pdf_files:
-        total_chunks += ingest_pdf(
-            openai_client,
-            supabase,
-            parser,
-            pdf_path,
-            SIMILARITY_THRESHOLD,
-        )
+        total_chunks += ingest_pdf(openai_client, supabase, parser, pdf_path)
 
-    print(f"Done. Ingested {total_chunks} chunks from {len(pdf_files)} PDF file(s).")
+    print(f"Done. Ingested {total_chunks} valid chunks from {len(pdf_files)} PDF file(s).")
     return 0
 
 

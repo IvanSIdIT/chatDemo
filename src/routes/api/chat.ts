@@ -68,12 +68,24 @@ export const Route = createFileRoute("/api/chat")({
           if (userText) {
             try {
               const chunks = await retrieveChunks(supabase, userText, {
-                threshold: 0.75,
+                threshold: 0.65,
                 limit: 3,
               });
+
+              console.log("[api/chat] RAG retrieved chunks:", {
+                count: chunks.length,
+                previews: chunks.map((chunk) => ({
+                  id: chunk.id,
+                  similarity: chunk.similarity,
+                  length: chunk.content.length,
+                  preview: chunk.content.slice(0, 160),
+                })),
+              });
+
               ragSystemPrompt = buildRagSystemPrompt(chunks);
             } catch (ragError) {
               console.error("[api/chat] RAG retrieval failed:", ragError);
+              ragSystemPrompt = buildRagSystemPrompt([]);
             }
           }
 
