@@ -15,10 +15,10 @@ export const RAG_EMBEDDING_MODEL = "text-embedding-3-small";
 export const RAG_EMBEDDING_DIMENSIONS = 1536;
 
 const DEFAULT_RPC_THRESHOLD = 0;
-const DEFAULT_APP_THRESHOLD = Number(process.env.RAG_MATCH_THRESHOLD ?? "0.3");
-const DEFAULT_MATCH_COUNT = 5;
-const MIN_CHUNK_CHARS = 40;
-const MIN_CHUNK_WORDS = 5;
+const DEFAULT_APP_THRESHOLD = Number(process.env.RAG_MATCH_THRESHOLD ?? "0.35");
+const DEFAULT_MATCH_COUNT = 8;
+const MIN_CHUNK_CHARS = 20;
+const MIN_CHUNK_WORDS = 3;
 
 function wordCount(text: string): number {
   const matches = text.match(/[\w\u0400-\u04FF]+/gu);
@@ -30,13 +30,8 @@ export function isValidChunkContent(content: string): boolean {
   if (trimmed.length < MIN_CHUNK_CHARS) {
     return false;
   }
-  if (wordCount(trimmed) < MIN_CHUNK_WORDS) {
-    return false;
-  }
-  if (/^[\s\W\d]+$/u.test(trimmed)) {
-    return false;
-  }
-  return true;
+
+  return wordCount(trimmed) >= MIN_CHUNK_WORDS;
 }
 
 export function formatPgvector(embedding: number[]): string {
@@ -127,11 +122,24 @@ export async function retrieveChunks(
 
   const thresholdFiltered = rawChunks.filter((chunk) => chunk.similarity >= appThreshold);
   const validChunks = thresholdFiltered.filter((chunk) => isValidChunkContent(chunk.content));
+  const droppedByValidation = thresholdFiltered.filter(
+    (chunk) => !isValidChunkContent(chunk.content),
+  );
 
   console.log(`${logLabel} After app threshold ${appThreshold}:`, thresholdFiltered.length);
   console.log(`${logLabel} After content validation:`, validChunks.length);
+  if (droppedByValidation.length > 0) {
+    console.log(
+      `${logLabel} Dropped by validation:`,
+      droppedByValidation.map((chunk) => ({
+        id: chunk.id,
+        length: chunk.content.length,
+        words: wordCount(chunk.content),
+      })),
+    );
+  }
 
-  return validChunks;
+  return validChunks.length > 0 ? validChunks : thresholdFiltered.slice(0, matchCount);
 }
 
 export function buildRagSystemPrompt(chunks: MatchedChunk[]): string {
