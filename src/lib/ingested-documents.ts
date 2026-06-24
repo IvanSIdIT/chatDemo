@@ -40,6 +40,31 @@ export async function fetchIngestedDocuments(): Promise<IngestedDocument[]> {
   return payload.documents;
 }
 
+export type DeleteIngestedDocumentResult = {
+  source: string;
+  deletedChunks: number;
+  deletedStorageObjects: number;
+};
+
+export async function deleteIngestedDocument(source: string): Promise<DeleteIngestedDocumentResult> {
+  const headers = await getAuthHeaders();
+  const response = await fetch("/api/admin/ingested-documents", {
+    method: "DELETE",
+    headers: {
+      ...headers,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ source }),
+  });
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Failed to delete document (${response.status}).`);
+  }
+
+  return (await response.json()) as DeleteIngestedDocumentResult;
+}
+
 export function formatDocumentSize(bytes: number | null): string {
   if (bytes == null || bytes < 0) {
     return "—";

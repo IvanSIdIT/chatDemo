@@ -110,6 +110,12 @@ export type Database = {
           last_ingested_at: string;
         }[];
       };
+      delete_ingested_document: {
+        Args: {
+          p_source: string;
+        };
+        Returns: number;
+      };
     };
     Enums: {
       user_role: UserRole;
