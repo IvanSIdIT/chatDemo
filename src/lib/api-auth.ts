@@ -89,3 +89,7 @@ export async function requireAuthenticatedRole(
 export async function requireManagerRequest(request: Request): Promise<AuthSuccess | AuthFailure> {
   return requireAuthenticatedRole(request, ["manager"]);
 }
+
+export async function requireWorkerRequest(request: Request): Promise<AuthSuccess | AuthFailure> {
+  return requireAuthenticatedRole(request, ["worker"]);
+}
