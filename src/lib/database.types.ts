@@ -100,6 +100,16 @@ export type Database = {
           rank: number;
         }[];
       };
+      list_ingested_documents: {
+        Args: Record<string, never>;
+        Returns: {
+          source: string;
+          document_title: string | null;
+          chunk_count: number;
+          first_ingested_at: string;
+          last_ingested_at: string;
+        }[];
+      };
     };
     Enums: {
       user_role: UserRole;

@@ -8,6 +8,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { IngestedDocumentsList } from "@/components/IngestedDocumentsList";
 import type { EmployeeMessage } from "@/lib/database.types";
 import {
   fetchManagerMessages,
@@ -49,7 +50,7 @@ async function resolveEmployeeEmail(employeeId: string): Promise<string | null> 
   return data?.email ?? null;
 }
 
-export function ManagerDashboard() {
+function EmployeeMessagesPanel() {
   const [messages, setMessages] = useState<EmployeeMessageWithEmail[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -141,6 +142,9 @@ export function ManagerDashboard() {
 
   return (
     <div className="overflow-x-auto rounded-lg border border-border bg-card">
+      <div className="border-b border-border px-4 py-3">
+        <h2 className="text-base font-semibold text-foreground">Сообщения сотрудников</h2>
+      </div>
       <Table>
         <TableHeader>
           <TableRow>
@@ -171,6 +175,17 @@ export function ManagerDashboard() {
           ))}
         </TableBody>
       </Table>
+    </div>
+  );
+}
+
+export function ManagerDashboard() {
+  return (
+    <div className="grid gap-6 xl:grid-cols-[minmax(280px,340px)_1fr]">
+      <aside className="xl:sticky xl:top-6 xl:self-start">
+        <IngestedDocumentsList />
+      </aside>
+      <EmployeeMessagesPanel />
     </div>
   );
 }

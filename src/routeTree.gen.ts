@@ -15,6 +15,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiChatRouteImport } from './routes/api/chat'
 import { Route as ApiAnalyticsUsageRouteImport } from './routes/api/analytics/usage'
 import { Route as ApiAdminUploadKnowledgeRouteImport } from './routes/api/admin/upload-knowledge'
+import { Route as ApiAdminIngestedDocumentsRouteImport } from './routes/api/admin/ingested-documents'
 
 const WorkerRoute = WorkerRouteImport.update({
   id: '/worker',
@@ -46,12 +47,19 @@ const ApiAdminUploadKnowledgeRoute = ApiAdminUploadKnowledgeRouteImport.update({
   path: '/api/admin/upload-knowledge',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAdminIngestedDocumentsRoute =
+  ApiAdminIngestedDocumentsRouteImport.update({
+    id: '/api/admin/ingested-documents',
+    path: '/api/admin/ingested-documents',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/manager': typeof ManagerRoute
   '/worker': typeof WorkerRoute
   '/api/chat': typeof ApiChatRoute
+  '/api/admin/ingested-documents': typeof ApiAdminIngestedDocumentsRoute
   '/api/admin/upload-knowledge': typeof ApiAdminUploadKnowledgeRoute
   '/api/analytics/usage': typeof ApiAnalyticsUsageRoute
 }
@@ -60,6 +68,7 @@ export interface FileRoutesByTo {
   '/manager': typeof ManagerRoute
   '/worker': typeof WorkerRoute
   '/api/chat': typeof ApiChatRoute
+  '/api/admin/ingested-documents': typeof ApiAdminIngestedDocumentsRoute
   '/api/admin/upload-knowledge': typeof ApiAdminUploadKnowledgeRoute
   '/api/analytics/usage': typeof ApiAnalyticsUsageRoute
 }
@@ -69,6 +78,7 @@ export interface FileRoutesById {
   '/manager': typeof ManagerRoute
   '/worker': typeof WorkerRoute
   '/api/chat': typeof ApiChatRoute
+  '/api/admin/ingested-documents': typeof ApiAdminIngestedDocumentsRoute
   '/api/admin/upload-knowledge': typeof ApiAdminUploadKnowledgeRoute
   '/api/analytics/usage': typeof ApiAnalyticsUsageRoute
 }
@@ -79,6 +89,7 @@ export interface FileRouteTypes {
     | '/manager'
     | '/worker'
     | '/api/chat'
+    | '/api/admin/ingested-documents'
     | '/api/admin/upload-knowledge'
     | '/api/analytics/usage'
   fileRoutesByTo: FileRoutesByTo
@@ -87,6 +98,7 @@ export interface FileRouteTypes {
     | '/manager'
     | '/worker'
     | '/api/chat'
+    | '/api/admin/ingested-documents'
     | '/api/admin/upload-knowledge'
     | '/api/analytics/usage'
   id:
@@ -95,6 +107,7 @@ export interface FileRouteTypes {
     | '/manager'
     | '/worker'
     | '/api/chat'
+    | '/api/admin/ingested-documents'
     | '/api/admin/upload-knowledge'
     | '/api/analytics/usage'
   fileRoutesById: FileRoutesById
@@ -104,6 +117,7 @@ export interface RootRouteChildren {
   ManagerRoute: typeof ManagerRoute
   WorkerRoute: typeof WorkerRoute
   ApiChatRoute: typeof ApiChatRoute
+  ApiAdminIngestedDocumentsRoute: typeof ApiAdminIngestedDocumentsRoute
   ApiAdminUploadKnowledgeRoute: typeof ApiAdminUploadKnowledgeRoute
   ApiAnalyticsUsageRoute: typeof ApiAnalyticsUsageRoute
 }
@@ -152,6 +166,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAdminUploadKnowledgeRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/admin/ingested-documents': {
+      id: '/api/admin/ingested-documents'
+      path: '/api/admin/ingested-documents'
+      fullPath: '/api/admin/ingested-documents'
+      preLoaderRoute: typeof ApiAdminIngestedDocumentsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -160,6 +181,7 @@ const rootRouteChildren: RootRouteChildren = {
   ManagerRoute: ManagerRoute,
   WorkerRoute: WorkerRoute,
   ApiChatRoute: ApiChatRoute,
+  ApiAdminIngestedDocumentsRoute: ApiAdminIngestedDocumentsRoute,
   ApiAdminUploadKnowledgeRoute: ApiAdminUploadKnowledgeRoute,
   ApiAnalyticsUsageRoute: ApiAnalyticsUsageRoute,
 }
