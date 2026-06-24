@@ -35,7 +35,7 @@ function mergeMessageUpdate(
       ? {
           ...row,
           ...updated,
-          employee_email: existing.employee_email,
+          employee_email: existing?.employee_email ?? null,
         }
       : row,
   );

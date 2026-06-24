@@ -10,13 +10,13 @@ const ACTION_PLAN_PREVIEW_CHAR_LIMIT = 240;
 type EmployeeActionPlanCellProps = {
   content: string;
   actionPlan: string | null;
-  actionPlanStatus: ActionPlanStatus;
+  actionPlanStatus?: ActionPlanStatus;
 };
 
 export function EmployeeActionPlanCell({
   content,
   actionPlan,
-  actionPlanStatus,
+  actionPlanStatus = "none",
 }: EmployeeActionPlanCellProps) {
   const [expanded, setExpanded] = useState(false);
 

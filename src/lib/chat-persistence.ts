@@ -2,6 +2,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { UIMessage } from "ai";
 
 import type { Database, MessageStatus } from "./database.types";
+import {
+  EMPLOYEE_MESSAGE_SELECT,
+  EMPLOYEE_MESSAGE_SELECT_LEGACY,
+  isMissingActionPlanColumnsError,
+  normalizeEmployeeMessage,
+} from "./employee-message-fields";
 
 type ServerSupabase = SupabaseClient<Database>;
 
@@ -38,12 +44,29 @@ export async function saveEmployeeMessage(
       content: trimmed,
       status,
     })
-    .select("id, employee_id, content, status, action_plan, action_plan_status, created_at")
+    .select(EMPLOYEE_MESSAGE_SELECT)
     .single();
+
+  if (error && isMissingActionPlanColumnsError(error)) {
+    const legacyResult = await supabase
+      .from("employee_messages")
+      .insert({
+        content: trimmed,
+        status,
+      })
+      .select(EMPLOYEE_MESSAGE_SELECT_LEGACY)
+      .single();
+
+    if (legacyResult.error) {
+      throw legacyResult.error;
+    }
+
+    return normalizeEmployeeMessage(legacyResult.data);
+  }
 
   if (error) {
     throw error;
   }
 
-  return data;
+  return normalizeEmployeeMessage(data);
 }

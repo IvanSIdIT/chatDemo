@@ -1,5 +1,11 @@
 import { supabase } from "./supabase";
 import type { EmployeeMessage, EmployeeMessageInsert, MessageStatus } from "./database.types";
+import {
+  EMPLOYEE_MESSAGE_SELECT,
+  EMPLOYEE_MESSAGE_SELECT_LEGACY,
+  isMissingActionPlanColumnsError,
+  normalizeEmployeeMessage,
+} from "./employee-message-fields";
 import { formatSupabaseError, logSupabaseError } from "./supabase-error";
 
 export type EmployeeMessageWithEmail = EmployeeMessage & {
@@ -40,8 +46,28 @@ export async function sendEmployeeMessage(content: string): Promise<EmployeeMess
   const { data, error } = await supabase
     .from("employee_messages")
     .insert(payload)
-    .select("id, employee_id, content, status, action_plan, action_plan_status, created_at")
+    .select(EMPLOYEE_MESSAGE_SELECT)
     .single();
+
+  if (error && isMissingActionPlanColumnsError(error)) {
+    const legacyResult = await supabase
+      .from("employee_messages")
+      .insert(payload)
+      .select(EMPLOYEE_MESSAGE_SELECT_LEGACY)
+      .single();
+
+    if (legacyResult.error) {
+      logSupabaseError("sendEmployeeMessage.insert", {
+        ...legacyResult.error,
+        payload,
+        userId: user.id,
+        userRole: user.user_metadata?.role,
+      });
+      throw new Error(formatSupabaseError(legacyResult.error));
+    }
+
+    return normalizeEmployeeMessage(legacyResult.data);
+  }
 
   if (error) {
     logSupabaseError("sendEmployeeMessage.insert", {
@@ -53,33 +79,43 @@ export async function sendEmployeeMessage(content: string): Promise<EmployeeMess
     throw new Error(formatSupabaseError(error));
   }
 
-  return data;
+  return normalizeEmployeeMessage(data);
 }
 
-export async function fetchWorkerMessages(): Promise<EmployeeMessage[]> {
-  const { data, error } = await supabase
+async function fetchEmployeeMessages(order: "asc" | "desc"): Promise<EmployeeMessage[]> {
+  const query = supabase
     .from("employee_messages")
-    .select("id, employee_id, content, status, action_plan, action_plan_status, created_at")
-    .order("created_at", { ascending: true });
+    .select(EMPLOYEE_MESSAGE_SELECT)
+    .order("created_at", { ascending: order === "asc" });
+
+  const { data, error } = await query;
+
+  if (error && isMissingActionPlanColumnsError(error)) {
+    const legacyResult = await supabase
+      .from("employee_messages")
+      .select(EMPLOYEE_MESSAGE_SELECT_LEGACY)
+      .order("created_at", { ascending: order === "asc" });
+
+    if (legacyResult.error) {
+      throw legacyResult.error;
+    }
+
+    return (legacyResult.data ?? []).map(normalizeEmployeeMessage);
+  }
 
   if (error) {
     throw error;
   }
 
-  return data ?? [];
+  return (data ?? []).map(normalizeEmployeeMessage);
+}
+
+export async function fetchWorkerMessages(): Promise<EmployeeMessage[]> {
+  return fetchEmployeeMessages("asc");
 }
 
 export async function fetchManagerMessages(): Promise<EmployeeMessageWithEmail[]> {
-  const { data: messages, error: messagesError } = await supabase
-    .from("employee_messages")
-    .select("id, employee_id, content, status, action_plan, action_plan_status, created_at")
-    .order("created_at", { ascending: false });
-
-  if (messagesError) {
-    throw messagesError;
-  }
-
-  const rows = (messages ?? []).filter(isEmployeeRequestMessage);
+  const rows = (await fetchEmployeeMessages("desc")).filter(isEmployeeRequestMessage);
   if (rows.length === 0) {
     return [];
   }
@@ -118,7 +154,7 @@ export function subscribeToEmployeeMessages(
         table: "employee_messages",
       },
       (payload) => {
-        const message = payload.new as EmployeeMessage;
+        const message = normalizeEmployeeMessage(payload.new as EmployeeMessage);
         if (!isEmployeeRequestMessage(message)) {
           return;
         }
@@ -133,7 +169,7 @@ export function subscribeToEmployeeMessages(
         table: "employee_messages",
       },
       (payload) => {
-        const message = payload.new as EmployeeMessage;
+        const message = normalizeEmployeeMessage(payload.new as EmployeeMessage);
         if (!isEmployeeRequestMessage(message)) {
           return;
         }

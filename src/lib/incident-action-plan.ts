@@ -2,6 +2,9 @@ import { openai } from "@ai-sdk/openai";
 import { generateText } from "ai";
 
 import type { ActionPlanStatus } from "@/lib/database.types";
+import {
+  isMissingActionPlanColumnsError,
+} from "@/lib/employee-message-fields";
 import { extractPdfText } from "@/lib/pdf-text";
 import { retrieveChunks, type MatchedChunk } from "@/lib/rag";
 import { createSupabaseServiceClient } from "@/lib/supabase-server";
@@ -52,6 +55,10 @@ export async function markActionPlanGenerating(messageId: string): Promise<void>
     .from("employee_messages")
     .update({ action_plan_status: "generating" })
     .eq("id", messageId);
+
+  if (error && isMissingActionPlanColumnsError(error)) {
+    return;
+  }
 
   if (error) {
     throw error;
