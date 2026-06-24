@@ -116,6 +116,10 @@ export type Database = {
         };
         Returns: number;
       };
+      delete_all_ingested_documents: {
+        Args: Record<string, never>;
+        Returns: number;
+      };
     };
     Enums: {
       user_role: UserRole;

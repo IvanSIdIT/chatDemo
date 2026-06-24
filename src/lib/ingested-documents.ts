@@ -64,6 +64,30 @@ export async function deleteIngestedDocument(source: string): Promise<DeleteInge
   return readApiJson<DeleteIngestedDocumentResult>(response);
 }
 
+export type DeleteAllIngestedDocumentsResult = {
+  deletedDocuments: number;
+  deletedChunks: number;
+  deletedStorageObjects: number;
+};
+
+export async function deleteAllIngestedDocuments(): Promise<DeleteAllIngestedDocumentsResult> {
+  const headers = await getAuthHeaders();
+  const response = await fetch("/api/admin/ingested-documents", {
+    method: "DELETE",
+    headers: {
+      ...headers,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ deleteAll: true }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response, "Failed to delete all documents"));
+  }
+
+  return readApiJson<DeleteAllIngestedDocumentsResult>(response);
+}
+
 export function formatDocumentSize(bytes: number | null): string {
   if (bytes == null || bytes < 0) {
     return "—";

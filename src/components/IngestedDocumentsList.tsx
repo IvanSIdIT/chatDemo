@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
+  deleteAllIngestedDocuments,
   deleteIngestedDocument,
   fetchIngestedDocuments,
   formatDocumentSize,
@@ -26,7 +27,9 @@ export function IngestedDocumentsList() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<IngestedDocument | null>(null);
+  const [pendingDeleteAll, setPendingDeleteAll] = useState(false);
   const [deletingSource, setDeletingSource] = useState<string | null>(null);
+  const isBusyDeleting = deletingSource !== null;
 
   const loadDocuments = useCallback(async (mode: "initial" | "refresh") => {
     if (mode === "initial") {
@@ -74,6 +77,21 @@ export function IngestedDocumentsList() {
     }
   }
 
+  async function handleConfirmDeleteAll() {
+    setDeletingSource("__all__");
+    setError(null);
+
+    try {
+      await deleteAllIngestedDocuments();
+      setDocuments([]);
+      setPendingDeleteAll(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось удалить все документы.");
+    } finally {
+      setDeletingSource(null);
+    }
+  }
+
   return (
     <>
       <section className="rounded-lg border border-border bg-card">
@@ -84,13 +102,27 @@ export function IngestedDocumentsList() {
               PDF, проиндексированные в базе знаний RAG.
             </p>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={isLoading || isRefreshing || deletingSource !== null}
-            onClick={() => void loadDocuments("refresh")}
-          >
+          <div className="flex shrink-0 flex-wrap gap-2">
+            {documents.length > 0 ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                disabled={isLoading || isRefreshing || isBusyDeleting}
+                onClick={() => setPendingDeleteAll(true)}
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                Удалить все
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isLoading || isRefreshing || isBusyDeleting}
+              onClick={() => void loadDocuments("refresh")}
+            >
             {isRefreshing ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
@@ -98,6 +130,7 @@ export function IngestedDocumentsList() {
             )}
             Обновить
           </Button>
+          </div>
         </div>
 
         {isLoading ? (
@@ -146,7 +179,7 @@ export function IngestedDocumentsList() {
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
-                      disabled={deletingSource !== null}
+                      disabled={isBusyDeleting}
                       aria-label={`Удалить ${document.source}`}
                       onClick={() => setPendingDelete(document)}
                     >
@@ -183,22 +216,61 @@ export function IngestedDocumentsList() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deletingSource !== null}>Отмена</AlertDialogCancel>
+            <AlertDialogCancel disabled={isBusyDeleting}>Отмена</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={deletingSource !== null}
+              disabled={isBusyDeleting}
               onClick={(event) => {
                 event.preventDefault();
                 void handleConfirmDelete();
               }}
             >
-              {deletingSource ? (
+              {deletingSource && deletingSource !== "__all__" ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   Удаление...
                 </>
               ) : (
                 "Удалить"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={pendingDeleteAll}
+        onOpenChange={(open) => {
+          if (!open && !isBusyDeleting) {
+            setPendingDeleteAll(false);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить все инструкции?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Будут удалены все {documents.length} PDF из базы знаний RAG вместе со всеми чанками и
+              файлами в хранилище. Это действие нельзя отменить.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isBusyDeleting}>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={isBusyDeleting}
+              onClick={(event) => {
+                event.preventDefault();
+                void handleConfirmDeleteAll();
+              }}
+            >
+              {deletingSource === "__all__" ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Удаление...
+                </>
+              ) : (
+                "Удалить все"
               )}
             </AlertDialogAction>
           </AlertDialogFooter>

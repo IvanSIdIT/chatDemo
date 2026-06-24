@@ -4,10 +4,12 @@ import { requireManagerRequest } from "@/lib/api-auth";
 import type { IngestedDocument } from "@/lib/ingested-documents";
 import {
   isValidDocumentSource,
-  listMatchingStorageObjectNames,
   matchesRagDocumentSource,
-  toRagStoragePaths,
 } from "@/lib/rag-document-sources";
+import {
+  deleteAllStorageUploads,
+  deleteStorageObjectsForSource,
+} from "@/lib/rag-document-cleanup";
 import { RAG_PDF_BUCKET } from "@/lib/rag-storage";
 import {
   createSupabaseServerClient,
@@ -115,15 +117,10 @@ export const Route = createFileRoute("/api/admin/ingested-documents")({
         }
 
         try {
-          const body = (await request.json().catch(() => null)) as { source?: string } | null;
-          const source = body?.source?.trim() ?? "";
-
-          if (!isValidDocumentSource(source)) {
-            return new Response(JSON.stringify({ error: "Invalid document source." }), {
-              status: 400,
-              headers: { "Content-Type": "application/json" },
-            });
-          }
+          const body = (await request.json().catch(() => null)) as {
+            source?: string;
+            deleteAll?: boolean;
+          } | null;
 
           const accessToken = getAccessTokenFromRequest(request);
           if (!accessToken) {
@@ -134,6 +131,58 @@ export const Route = createFileRoute("/api/admin/ingested-documents")({
           }
 
           const userSupabase = createSupabaseServerClient(accessToken);
+          const serviceSupabase = createSupabaseServiceClient();
+
+          if (body?.deleteAll) {
+            const { data: existingRows, error: listError } =
+              await userSupabase.rpc("list_ingested_documents");
+
+            if (listError) {
+              console.error("[api/admin/ingested-documents] list before delete all failed:", listError);
+              return new Response(JSON.stringify({ error: "Failed to delete all ingested documents." }), {
+                status: 500,
+                headers: { "Content-Type": "application/json" },
+              });
+            }
+
+            const deletedDocuments = (existingRows ?? []).length;
+
+            const { data: deletedChunks, error } = await userSupabase.rpc(
+              "delete_all_ingested_documents",
+            );
+
+            if (error) {
+              console.error("[api/admin/ingested-documents] delete all rpc failed:", error);
+              return new Response(JSON.stringify({ error: "Failed to delete all ingested documents." }), {
+                status: 500,
+                headers: { "Content-Type": "application/json" },
+              });
+            }
+
+            const deletedStorageObjects = await deleteAllStorageUploads(serviceSupabase);
+
+            return new Response(
+              JSON.stringify({
+                deletedDocuments,
+                deletedChunks: Number(deletedChunks ?? 0),
+                deletedStorageObjects,
+              }),
+              {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+              },
+            );
+          }
+
+          const source = body?.source?.trim() ?? "";
+
+          if (!isValidDocumentSource(source)) {
+            return new Response(JSON.stringify({ error: "Invalid document source." }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+
           const { data: deletedChunks, error } = await userSupabase.rpc("delete_ingested_document", {
             p_source: source,
           });
@@ -146,33 +195,7 @@ export const Route = createFileRoute("/api/admin/ingested-documents")({
             });
           }
 
-          const serviceSupabase = createSupabaseServiceClient();
-          const { data: storageObjects, error: storageError } = await serviceSupabase.storage
-            .from(RAG_PDF_BUCKET)
-            .list("uploads", { limit: 1000 });
-
-          let deletedStorageObjects = 0;
-          if (storageError) {
-            console.warn("[api/admin/ingested-documents] storage list failed:", storageError);
-          } else {
-            const matchingNames = listMatchingStorageObjectNames(
-              (storageObjects ?? []).map((object) => object.name),
-              source,
-            );
-            const storagePaths = toRagStoragePaths(matchingNames);
-
-            if (storagePaths.length > 0) {
-              const { error: removeError } = await serviceSupabase.storage
-                .from(RAG_PDF_BUCKET)
-                .remove(storagePaths);
-
-              if (removeError) {
-                console.warn("[api/admin/ingested-documents] storage remove failed:", removeError);
-              } else {
-                deletedStorageObjects = storagePaths.length;
-              }
-            }
-          }
+          const deletedStorageObjects = await deleteStorageObjectsForSource(serviceSupabase, source);
 
           return new Response(
             JSON.stringify({
