@@ -41,3 +41,5 @@ __pycache__/
 *.py[cod]
 .venv/
 ingest.log
+uploads/
+logs/ingest/

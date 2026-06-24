@@ -9,6 +9,7 @@ Pipeline:
 
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import sys
@@ -420,26 +421,100 @@ def collect_pdf_files() -> list[Path]:
     return sorted(paths.values(), key=lambda path: path.name.lower())
 
 
-def main() -> int:
-    load_dotenv()
+def delete_chunks_for_source(supabase: Client, source: str) -> int:
+    print(f"Removing existing chunks for source={source}...")
+    deleted = 0
+    while True:
+        response = (
+            supabase.table("document_chunks")
+            .select("id")
+            .contains("metadata", {"source": source})
+            .limit(INSERT_BATCH_SIZE)
+            .execute()
+        )
+        ids = [row["id"] for row in (response.data or [])]
+        if not ids:
+            break
+        supabase.table("document_chunks").delete().in_("id", ids).execute()
+        deleted += len(ids)
+    print(f"Removed {deleted} existing chunk(s) for {source}.")
+    return deleted
 
-    openai_api_key = require_env("OPENAI_API_KEY")
-    require_env("LLAMA_CLOUD_API_KEY")
+
+def cleanup_uploaded_file() -> None:
+    cleanup_path = os.getenv("INGEST_CLEANUP_PATH", "").strip()
+    if not cleanup_path:
+        return
+
+    path = Path(cleanup_path)
+    if path.exists():
+        path.unlink()
+        print(f"Removed temporary upload file: {path}")
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Ingest PDF documents into the RAG knowledge base.")
+    parser.add_argument(
+        "pdf_path",
+        nargs="?",
+        help="Optional path to a single PDF file. If omitted, ingest all PDFs from docs/.",
+    )
+    parser.add_argument(
+        "--replace-source",
+        action="store_true",
+        help="Replace only chunks for the uploaded PDF source instead of truncating the full table.",
+    )
+    return parser
+
+
+def ingest_single_pdf(pdf_path: Path, *, replace_source: bool) -> int:
+    if not pdf_path.exists():
+        raise RuntimeError(f"PDF not found: {pdf_path}")
+    if pdf_path.suffix.lower() != ".pdf":
+        raise RuntimeError(f"Only PDF files are supported: {pdf_path}")
+
+    openai_client = OpenAI(api_key=require_env("OPENAI_API_KEY"))
     supabase_url = os.getenv("SUPABASE_URL", "").strip() or os.getenv("VITE_SUPABASE_URL", "").strip()
     if not supabase_url:
         raise RuntimeError("Missing required environment variable: SUPABASE_URL or VITE_SUPABASE_URL")
-    supabase_key = require_env("SUPABASE_SECRET_KEY")
+    supabase = create_client(supabase_url, require_env("SUPABASE_SECRET_KEY"))
+    parser = create_llama_parser()
+    splitter = create_splitter()
+
+    if replace_source:
+        delete_chunks_for_source(supabase, pdf_path.name)
+
+    total_chunks = ingest_pdf(openai_client, supabase, parser, splitter, pdf_path)
+    print(f"Done. Ingested {total_chunks} contextual chunks from {pdf_path.name}.")
+    return 0 if total_chunks > 0 else 1
+
+
+def main() -> int:
+    load_dotenv()
+    args = build_arg_parser().parse_args()
+
+    require_env("OPENAI_API_KEY")
+    require_env("LLAMA_CLOUD_API_KEY")
+    require_env("SUPABASE_SECRET_KEY")
 
     if not DOCS_DIR.exists():
         DOCS_DIR.mkdir(parents=True, exist_ok=True)
+
+    if args.pdf_path:
+        pdf_path = Path(args.pdf_path).expanduser().resolve()
+        return ingest_single_pdf(pdf_path, replace_source=args.replace_source)
+
+    supabase_url = os.getenv("SUPABASE_URL", "").strip() or os.getenv("VITE_SUPABASE_URL", "").strip()
+    if not supabase_url:
+        raise RuntimeError("Missing required environment variable: SUPABASE_URL or VITE_SUPABASE_URL")
 
     pdf_files = collect_pdf_files()
     if not pdf_files:
         print(f"No PDF files found. Add files to {DOCS_DIR} or set INGEST_PDF_PATH in .env.")
         return 1
 
-    openai_client = OpenAI(api_key=openai_api_key)
-    supabase = create_client(supabase_url, supabase_key)
+    openai_client = OpenAI(api_key=require_env("OPENAI_API_KEY"))
+    supabase = create_client(supabase_url, require_env("SUPABASE_SECRET_KEY"))
     parser = create_llama_parser()
     splitter = create_splitter()
 
@@ -459,3 +534,5 @@ if __name__ == "__main__":
     except Exception as error:  # noqa: BLE001
         print(f"ingest.py failed: {error}", file=sys.stderr)
         raise SystemExit(1) from error
+    finally:
+        cleanup_uploaded_file()

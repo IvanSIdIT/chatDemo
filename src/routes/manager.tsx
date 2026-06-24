@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { ManagerDashboard } from "@/components/ManagerDashboard";
+import { RagUploadForm } from "@/components/RagUploadForm";
 import { UsageAnalyticsChart } from "@/components/UsageAnalyticsChart";
 import { requireRole, signOut } from "@/lib/auth";
 
@@ -32,6 +33,7 @@ function ManagerPage() {
       </header>
 
       <main className="mx-auto w-full max-w-6xl flex-1 space-y-6 px-4 py-6 sm:px-6">
+        <RagUploadForm />
         <UsageAnalyticsChart />
         <ManagerDashboard />
       </main>
