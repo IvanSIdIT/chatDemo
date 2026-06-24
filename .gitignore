@@ -19,6 +19,7 @@ dist-ssr
 .env
 .env.*
 .env*.local
+.ingest-worker-secret.tmp
 !.env.example
 
 # Wrangler / Cloudflare
