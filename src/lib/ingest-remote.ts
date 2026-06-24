@@ -40,7 +40,7 @@ export async function triggerRemoteIngest(
       fileName,
       signedUrl,
     }),
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!response.ok) {
