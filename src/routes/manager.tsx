@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { ManagerDashboard } from "@/components/ManagerDashboard";
+import { UsageAnalyticsChart } from "@/components/UsageAnalyticsChart";
 import { requireRole, signOut } from "@/lib/auth";
 
 export const Route = createFileRoute("/manager")({
@@ -30,7 +31,8 @@ function ManagerPage() {
         </Button>
       </header>
 
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6">
+      <main className="mx-auto w-full max-w-6xl flex-1 space-y-6 px-4 py-6 sm:px-6">
+        <UsageAnalyticsChart />
         <ManagerDashboard />
       </main>
     </div>

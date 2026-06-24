@@ -13,6 +13,7 @@ import { Route as WorkerRouteImport } from './routes/worker'
 import { Route as ManagerRouteImport } from './routes/manager'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiChatRouteImport } from './routes/api/chat'
+import { Route as ApiAnalyticsUsageRouteImport } from './routes/api/analytics/usage'
 
 const WorkerRoute = WorkerRouteImport.update({
   id: '/worker',
@@ -34,18 +35,25 @@ const ApiChatRoute = ApiChatRouteImport.update({
   path: '/api/chat',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAnalyticsUsageRoute = ApiAnalyticsUsageRouteImport.update({
+  id: '/api/analytics/usage',
+  path: '/api/analytics/usage',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/manager': typeof ManagerRoute
   '/worker': typeof WorkerRoute
   '/api/chat': typeof ApiChatRoute
+  '/api/analytics/usage': typeof ApiAnalyticsUsageRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/manager': typeof ManagerRoute
   '/worker': typeof WorkerRoute
   '/api/chat': typeof ApiChatRoute
+  '/api/analytics/usage': typeof ApiAnalyticsUsageRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -53,13 +61,20 @@ export interface FileRoutesById {
   '/manager': typeof ManagerRoute
   '/worker': typeof WorkerRoute
   '/api/chat': typeof ApiChatRoute
+  '/api/analytics/usage': typeof ApiAnalyticsUsageRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/manager' | '/worker' | '/api/chat'
+  fullPaths: '/' | '/manager' | '/worker' | '/api/chat' | '/api/analytics/usage'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/manager' | '/worker' | '/api/chat'
-  id: '__root__' | '/' | '/manager' | '/worker' | '/api/chat'
+  to: '/' | '/manager' | '/worker' | '/api/chat' | '/api/analytics/usage'
+  id:
+    | '__root__'
+    | '/'
+    | '/manager'
+    | '/worker'
+    | '/api/chat'
+    | '/api/analytics/usage'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -67,6 +82,7 @@ export interface RootRouteChildren {
   ManagerRoute: typeof ManagerRoute
   WorkerRoute: typeof WorkerRoute
   ApiChatRoute: typeof ApiChatRoute
+  ApiAnalyticsUsageRoute: typeof ApiAnalyticsUsageRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -99,6 +115,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiChatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/analytics/usage': {
+      id: '/api/analytics/usage'
+      path: '/api/analytics/usage'
+      fullPath: '/api/analytics/usage'
+      preLoaderRoute: typeof ApiAnalyticsUsageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -107,6 +130,7 @@ const rootRouteChildren: RootRouteChildren = {
   ManagerRoute: ManagerRoute,
   WorkerRoute: WorkerRoute,
   ApiChatRoute: ApiChatRoute,
+  ApiAnalyticsUsageRoute: ApiAnalyticsUsageRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
