@@ -1,6 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 import { requireManagerRequest } from "@/lib/api-auth";
+import {
+  DUPLICATE_INGESTED_DOCUMENT_MESSAGE,
+  isIngestedDocumentSourceTaken,
+} from "@/lib/ingested-document-lookup";
 import { MAX_RAG_PDF_BYTES, sanitizePdfFilename } from "@/lib/ingest-runner";
 import { buildRagStoragePath, createSignedPdfUploadUrl } from "@/lib/rag-storage";
 
@@ -33,6 +37,13 @@ export const Route = createFileRoute("/api/admin/upload-knowledge-prepare")({
           if (fileSize > MAX_RAG_PDF_BYTES) {
             return new Response(JSON.stringify({ error: "PDF is too large. Maximum allowed size is 80 MB." }), {
               status: 400,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+
+          if (await isIngestedDocumentSourceTaken(fileName)) {
+            return new Response(JSON.stringify({ error: DUPLICATE_INGESTED_DOCUMENT_MESSAGE }), {
+              status: 409,
               headers: { "Content-Type": "application/json" },
             });
           }

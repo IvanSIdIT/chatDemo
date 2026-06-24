@@ -4,6 +4,10 @@ import { unlink } from "node:fs/promises";
 
 import { requireManagerRequest } from "@/lib/api-auth";
 import {
+  DUPLICATE_INGESTED_DOCUMENT_MESSAGE,
+  isIngestedDocumentSourceTaken,
+} from "@/lib/ingested-document-lookup";
+import {
   canSpawnLocalIngest,
   queueIngestJob,
   sanitizePdfFilename,
@@ -53,6 +57,11 @@ async function queueKnowledgeUpload(options: {
   fileEntry?: File;
 }): Promise<QueueUploadResult> {
   const fileName = sanitizePdfFilename(options.fileName);
+
+  if (await isIngestedDocumentSourceTaken(fileName)) {
+    throw new Error(DUPLICATE_INGESTED_DOCUMENT_MESSAGE);
+  }
+
   let savedPath: string | undefined;
   let storagePath = options.storagePath;
 
