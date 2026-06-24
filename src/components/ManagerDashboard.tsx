@@ -9,7 +9,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { IngestedDocumentsList } from "@/components/IngestedDocumentsList";
 import type { EmployeeMessage } from "@/lib/database.types";
 import {
   fetchManagerMessages,
@@ -208,12 +207,5 @@ function EmployeeMessagesPanel() {
 }
 
 export function ManagerDashboard() {
-  return (
-    <div className="grid gap-6 xl:grid-cols-[minmax(280px,340px)_1fr]">
-      <aside className="xl:sticky xl:top-6 xl:self-start">
-        <IngestedDocumentsList />
-      </aside>
-      <EmployeeMessagesPanel />
-    </div>
-  );
+  return <EmployeeMessagesPanel />;
 }
