@@ -55,7 +55,7 @@ export const Route = createFileRoute("/api/admin/upload-knowledge-prepare")({
         } catch (error) {
           const message =
             error instanceof Error ? error.message : "Failed to prepare PDF upload.";
-          console.error("[api/admin/upload-knowledge/prepare] failed:", error);
+          console.error("[api/admin/upload-knowledge-prepare] failed:", error);
 
           return new Response(JSON.stringify({ error: message }), {
             status: 500,

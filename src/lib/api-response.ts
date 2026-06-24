@@ -13,10 +13,14 @@ export async function readApiErrorMessage(
     const text = (await response.text().catch(() => "")).trim();
     if (text) {
       if (response.status === 413 || /entity too large|payload too large/i.test(text)) {
-        return "Файл слишком большой для прямой загрузки через сервер. Попробуйте снова — загрузка идёт напрямую в Storage.";
+        return "Файл слишком большой. Максимальный размер PDF — 80 МБ.";
       }
 
-      return text;
+      if (text.startsWith("<!DOCTYPE") || text.startsWith("<html")) {
+        return `Сервер вернул HTML вместо JSON (${response.status}). Возможно, API-маршрут не найден — обновите страницу или перезапустите dev-сервер.`;
+      }
+
+      return text.length > 240 ? `${text.slice(0, 240)}…` : text;
     }
   }
 
@@ -32,9 +36,13 @@ export async function readApiJson<T>(response: Response): Promise<T> {
 
   if (!contentType.includes("application/json")) {
     const text = (await response.text().catch(() => "")).trim();
-    throw new Error(
-      text || `Сервер вернул неожиданный ответ (${response.status}).`,
-    );
+    if (text.startsWith("<!DOCTYPE") || text.startsWith("<html")) {
+      throw new Error(
+        `Сервер вернул HTML вместо JSON (${response.status}). API-маршрут не найден или устарел кэш.`,
+      );
+    }
+
+    throw new Error(text || `Сервер вернул неожиданный ответ (${response.status}).`);
   }
 
   return (await response.json()) as T;

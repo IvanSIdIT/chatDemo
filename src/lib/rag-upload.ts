@@ -32,7 +32,7 @@ async function getAuthHeaders(): Promise<HeadersInit> {
 
 async function prepareDirectUpload(file: File): Promise<RagUploadPrepareResponse> {
   const headers = await getAuthHeaders();
-  const response = await fetch("/api/admin/upload-knowledge/prepare", {
+  const response = await fetch("/api/admin/upload-knowledge-prepare", {
     method: "POST",
     headers: {
       ...headers,
