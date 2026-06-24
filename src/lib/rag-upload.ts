@@ -1,3 +1,4 @@
+import { readApiErrorMessage, readApiJson } from "@/lib/api-response";
 import { supabase } from "@/lib/supabase";
 
 export type RagUploadResponse = {
@@ -9,8 +10,11 @@ export type RagUploadResponse = {
   message: string;
 };
 
-export type RagUploadErrorResponse = {
-  error: string;
+type RagUploadPrepareResponse = {
+  fileName: string;
+  storagePath: string;
+  signedUploadUrl: string;
+  token: string;
 };
 
 async function getAuthHeaders(): Promise<HeadersInit> {
@@ -26,26 +30,69 @@ async function getAuthHeaders(): Promise<HeadersInit> {
   };
 }
 
-export async function uploadKnowledgePdf(file: File): Promise<RagUploadResponse> {
+async function prepareDirectUpload(file: File): Promise<RagUploadPrepareResponse> {
   const headers = await getAuthHeaders();
-  const formData = new FormData();
-  formData.append("file", file);
-
-  const response = await fetch("/api/admin/upload-knowledge", {
+  const response = await fetch("/api/admin/upload-knowledge/prepare", {
     method: "POST",
-    headers,
-    body: formData,
+    headers: {
+      ...headers,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      fileName: file.name,
+      fileSize: file.size,
+    }),
   });
 
-  const payload = (await response.json()) as RagUploadResponse | RagUploadErrorResponse;
-
   if (!response.ok) {
-    const message =
-      typeof payload === "object" && payload && "error" in payload && payload.error
-        ? payload.error
-        : `Upload failed (${response.status}).`;
-    throw new Error(message);
+    throw new Error(await readApiErrorMessage(response, "Failed to prepare PDF upload"));
   }
 
-  return payload as RagUploadResponse;
+  return readApiJson<RagUploadPrepareResponse>(response);
+}
+
+async function uploadPdfToSignedUrl(signedUploadUrl: string, file: File): Promise<void> {
+  const response = await fetch(signedUploadUrl, {
+    method: "PUT",
+    headers: {
+      "Content-Type": file.type || "application/pdf",
+    },
+    body: file,
+  });
+
+  if (!response.ok) {
+    const text = (await response.text().catch(() => "")).trim();
+    throw new Error(text || `Direct storage upload failed (${response.status}).`);
+  }
+}
+
+async function completeKnowledgeUpload(
+  storagePath: string,
+  fileName: string,
+): Promise<RagUploadResponse> {
+  const headers = await getAuthHeaders();
+  const response = await fetch("/api/admin/upload-knowledge", {
+    method: "POST",
+    headers: {
+      ...headers,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ storagePath, fileName }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response, "Failed to queue PDF ingest"));
+  }
+
+  return readApiJson<RagUploadResponse>(response);
+}
+
+export async function uploadKnowledgePdf(file: File): Promise<RagUploadResponse> {
+  if (!file.name.toLowerCase().endsWith(".pdf")) {
+    throw new Error("Only .pdf documents are supported.");
+  }
+
+  const prepared = await prepareDirectUpload(file);
+  await uploadPdfToSignedUrl(prepared.signedUploadUrl, file);
+  return completeKnowledgeUpload(prepared.storagePath, prepared.fileName);
 }

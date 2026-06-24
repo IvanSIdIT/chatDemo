@@ -1,3 +1,4 @@
+import { readApiErrorMessage, readApiJson } from "@/lib/api-response";
 import { supabase } from "@/lib/supabase";
 
 export type IngestedDocument = {
@@ -32,11 +33,10 @@ export async function fetchIngestedDocuments(): Promise<IngestedDocument[]> {
   const response = await fetch("/api/admin/ingested-documents", { headers });
 
   if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(payload?.error ?? `Failed to load ingested documents (${response.status}).`);
+    throw new Error(await readApiErrorMessage(response, "Failed to load ingested documents"));
   }
 
-  const payload = (await response.json()) as IngestedDocumentsApiResponse;
+  const payload = await readApiJson<IngestedDocumentsApiResponse>(response);
   return payload.documents;
 }
 
@@ -58,11 +58,10 @@ export async function deleteIngestedDocument(source: string): Promise<DeleteInge
   });
 
   if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(payload?.error ?? `Failed to delete document (${response.status}).`);
+    throw new Error(await readApiErrorMessage(response, "Failed to delete document"));
   }
 
-  return (await response.json()) as DeleteIngestedDocumentResult;
+  return readApiJson<DeleteIngestedDocumentResult>(response);
 }
 
 export function formatDocumentSize(bytes: number | null): string {

@@ -13,6 +13,8 @@ const ingestLogsDir = join(projectRoot, "logs", "ingest");
 
 const MAX_PDF_BYTES = 80 * 1024 * 1024;
 
+export const MAX_RAG_PDF_BYTES = MAX_PDF_BYTES;
+
 export type IngestJobInfo = {
   jobId: string;
   logPath: string;

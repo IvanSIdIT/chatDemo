@@ -8,12 +8,34 @@ import { createSupabaseServiceClient } from "@/lib/supabase-server";
 
 export const RAG_PDF_BUCKET = "rag-pdfs";
 
+export function buildRagStoragePath(fileName: string): string {
+  return `uploads/${Date.now()}-${randomUUID()}-${fileName}`;
+}
+
+export async function createSignedPdfUploadUrl(
+  storagePath: string,
+): Promise<{ signedUrl: string; token: string }> {
+  const supabase = createSupabaseServiceClient();
+  const { data, error } = await supabase.storage
+    .from(RAG_PDF_BUCKET)
+    .createSignedUploadUrl(storagePath);
+
+  if (error || !data?.signedUrl) {
+    throw new Error(error?.message ?? "Failed to create signed upload URL for PDF.");
+  }
+
+  return {
+    signedUrl: data.signedUrl,
+    token: data.token,
+  };
+}
+
 export async function uploadPdfToStorage(
   file: File,
   fileName: string,
 ): Promise<{ storagePath: string }> {
   const supabase = createSupabaseServiceClient();
-  const storagePath = `uploads/${Date.now()}-${randomUUID()}-${fileName}`;
+  const storagePath = buildRagStoragePath(fileName);
   const buffer = Buffer.from(await file.arrayBuffer());
 
   const { error } = await supabase.storage.from(RAG_PDF_BUCKET).upload(storagePath, buffer, {
