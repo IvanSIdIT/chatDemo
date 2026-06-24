@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """
-Semantic-chunk PDF ingest for Supabase pgvector (LlamaParse → Markdown → embeddings).
+Markdown-first RAG ingest for technical PDFs.
 
-Usage:
-  npm run ingest
-  py -3 ingest.py
-
-Requires: OPENAI_API_KEY, SUPABASE_SECRET_KEY, LLAMA_CLOUD_API_KEY
+Pipeline:
+  LlamaParse -> Markdown blocks -> contextual metadata injection ->
+  LlamaIndex SentenceSplitter -> OpenAI embeddings -> Supabase pgvector
 """
 
 from __future__ import annotations
@@ -14,10 +12,12 @@ from __future__ import annotations
 import os
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
 from dotenv import load_dotenv
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.schema import Document
 from llama_parse import LlamaParse
 from openai import OpenAI
 from supabase import Client, create_client
@@ -29,12 +29,19 @@ EMBED_BATCH_SIZE = 64
 INSERT_BATCH_SIZE = 25
 LLAMA_NUM_WORKERS = int(os.getenv("LLAMA_PARSE_WORKERS", "4"))
 
-MIN_UNIT_CHARS = int(os.getenv("MIN_UNIT_CHARS", "40"))
-MIN_UNIT_WORDS = int(os.getenv("MIN_UNIT_WORDS", "5"))
+CHUNK_SIZE = int(os.getenv("LLAMA_CHUNK_SIZE", "1024"))
+CHUNK_OVERLAP = int(os.getenv("LLAMA_CHUNK_OVERLAP", "160"))
+
+MIN_BLOCK_CHARS = int(os.getenv("MIN_BLOCK_CHARS", "40"))
+MIN_BLOCK_WORDS = int(os.getenv("MIN_BLOCK_WORDS", "5"))
 MIN_CHUNK_CHARS = int(os.getenv("MIN_CHUNK_CHARS", "80"))
 MIN_CHUNK_WORDS = int(os.getenv("MIN_CHUNK_WORDS", "12"))
-SEMANTIC_PERCENTILE = float(os.getenv("SEMANTIC_PERCENTILE", "95"))
-FIXED_SIMILARITY_FLOOR = float(os.getenv("SEMANTIC_SIMILARITY_FLOOR", "0.75"))
+
+
+@dataclass
+class ParsedPage:
+    page_number: int
+    text: str
 
 
 def require_env(name: str) -> str:
@@ -48,12 +55,9 @@ def word_count(text: str) -> int:
     return len(re.findall(r"[\w\u0400-\u04FF]+", text, re.UNICODE))
 
 
-def create_llama_parser() -> LlamaParse:
-    return LlamaParse(
-        api_key=require_env("LLAMA_CLOUD_API_KEY"),
-        result_type="markdown",
-        num_workers=LLAMA_NUM_WORKERS,
-    )
+def is_meaningful_text(text: str, *, min_chars: int, min_words: int) -> bool:
+    stripped = text.strip()
+    return len(stripped) >= min_chars and word_count(stripped) >= min_words
 
 
 def clean_markdown_text(text: str) -> str:
@@ -67,47 +71,47 @@ def clean_markdown_text(text: str) -> str:
         if not stripped:
             cleaned_lines.append("")
             continue
-        if re.fullmatch(r"[\W_\d]+", stripped):
-            continue
-        if len(stripped) == 1 and not stripped.isalnum():
+        if re.fullmatch(r"[-=_*]{3,}", stripped):
             continue
         cleaned_lines.append(stripped)
 
     return "\n".join(cleaned_lines).strip()
 
 
-def is_meaningful_text(text: str, *, min_chars: int, min_words: int) -> bool:
-    stripped = text.strip()
-    if len(stripped) < min_chars:
-        return False
-    if word_count(stripped) < min_words:
-        return False
-    if re.fullmatch(r"[\s\W\d]+", stripped):
-        return False
-    return True
+def create_llama_parser() -> LlamaParse:
+    return LlamaParse(
+        api_key=require_env("LLAMA_CLOUD_API_KEY"),
+        result_type="markdown",
+        num_workers=LLAMA_NUM_WORKERS,
+    )
+
+
+def create_splitter() -> SentenceSplitter:
+    return SentenceSplitter(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+        paragraph_separator="\n\n",
+        secondary_chunking_regex=r"(?<=[.!?…])\s+",
+    )
 
 
 def extract_page_number(metadata: dict | None) -> int | None:
     if not metadata:
         return None
-
     for key in ("page_label", "page_number", "page", "page_index"):
         value = metadata.get(key)
-        if value is None:
-            continue
         if isinstance(value, int):
             return value
         if isinstance(value, str) and value.isdigit():
             return int(value)
-
     return None
 
 
-def parse_pdf_markdown(parser: LlamaParse, pdf_path: Path) -> list[dict]:
+def parse_pdf_markdown(parser: LlamaParse, pdf_path: Path) -> list[ParsedPage]:
     print(f"  LlamaParse: extracting markdown from {pdf_path.name}...")
     documents = parser.load_data(str(pdf_path))
 
-    pages: list[dict] = []
+    pages: list[ParsedPage] = []
     for index, document in enumerate(documents):
         raw_text = getattr(document, "text", None) or ""
         text = clean_markdown_text(raw_text)
@@ -116,7 +120,7 @@ def parse_pdf_markdown(parser: LlamaParse, pdf_path: Path) -> list[dict]:
 
         metadata = getattr(document, "metadata", None) or {}
         page_number = extract_page_number(metadata) or (index + 1)
-        pages.append({"page": page_number, "text": text})
+        pages.append(ParsedPage(page_number=page_number, text=text))
 
     if not pages:
         raise RuntimeError(f"LlamaParse returned no text for {pdf_path.name}")
@@ -125,90 +129,193 @@ def parse_pdf_markdown(parser: LlamaParse, pdf_path: Path) -> list[dict]:
     return pages
 
 
-def is_markdown_table(block: str) -> bool:
-    lines = [line.strip() for line in block.splitlines() if line.strip()]
-    if len(lines) < 2:
-        return False
-
-    pipe_lines = sum(1 for line in lines if "|" in line)
-    separator_lines = sum(1 for line in lines if re.match(r"^\|?[\s:\-|]+\|?$", line))
-    return pipe_lines >= 2 and (separator_lines >= 1 or pipe_lines >= len(lines) * 0.6)
+def is_markdown_table_line(line: str) -> bool:
+    stripped = line.strip()
+    return "|" in stripped and len(stripped) > 2
 
 
-def is_markdown_figure_block(block: str) -> bool:
-    lowered = block.lower()
-    if lowered.startswith("!["):
-        return True
-    return bool(re.match(r"^(рис\.|рисунок|figure|fig\.)\s*\d+", lowered, re.IGNORECASE))
+def is_note_like_block(text: str) -> bool:
+    return bool(
+        re.match(
+            r"^(note|warning|caution|important|внимание|примечание)\b",
+            text.strip(),
+            re.IGNORECASE,
+        )
+    )
 
 
-def split_sentences(text: str) -> list[str]:
-    normalized = re.sub(r"[ \t]+", " ", text).strip()
-    if not normalized:
-        return []
-
-    parts = re.split(r"(?<=[.!?…])\s+(?=[A-ZА-ЯЁ0-9«\"(])", normalized)
-    sentences: list[str] = []
-    buffer = ""
-
-    for part in parts:
-        candidate = f"{buffer} {part}".strip() if buffer else part.strip()
-        if not candidate:
-            continue
-
-        if is_meaningful_text(candidate, min_chars=MIN_UNIT_CHARS, min_words=MIN_UNIT_WORDS):
-            sentences.append(candidate)
-            buffer = ""
-        else:
-            buffer = candidate
-
-    if buffer:
-        if sentences:
-            sentences[-1] = f"{sentences[-1]} {buffer}".strip()
-        elif is_meaningful_text(buffer, min_chars=MIN_UNIT_CHARS, min_words=MIN_UNIT_WORDS):
-            sentences.append(buffer)
-
-    return sentences
+def split_heading(line: str) -> tuple[int, str] | None:
+    match = re.match(r"^(#{1,6})\s+(.*)$", line.strip())
+    if not match:
+        return None
+    return len(match.group(1)), match.group(2).strip()
 
 
-def split_markdown_units(text: str) -> list[str]:
-    blocks = re.split(r"\n{2,}", text.strip())
-    units: list[str] = []
-    skipped = 0
+def extract_document_title(source: str, pages: list[ParsedPage]) -> str:
+    for page in pages[:3]:
+        for line in page.text.splitlines():
+            heading = split_heading(line)
+            if heading and heading[0] == 1:
+                return heading[1]
+    return Path(source).stem.replace("_", " ")
 
+
+def build_context_prefix(metadata: dict) -> str:
+    document_title = metadata.get("document_title", "Unknown document")
+    section_path = metadata.get("section_path", "General")
+    page = metadata.get("page", "?")
+    return (
+        f"[Document: {document_title} -> Section: {section_path} -> "
+        f"Page: {page} -> Block: {metadata.get('block_type', 'text')}]"
+    )
+
+
+def flush_block(
+    blocks: list[Document],
+    *,
+    source: str,
+    document_title: str,
+    page_number: int,
+    heading_stack: list[str],
+    block_lines: list[str],
+    block_type: str,
+) -> None:
+    text = "\n".join(block_lines).strip()
+    if not text:
+        return
+
+    min_chars = 20 if block_type == "table" else MIN_BLOCK_CHARS
+    min_words = 3 if block_type == "table" else MIN_BLOCK_WORDS
+    if not is_meaningful_text(text, min_chars=min_chars, min_words=min_words):
+        return
+
+    section_path = " -> ".join(heading_stack) if heading_stack else "General"
+    metadata = {
+        "source": source,
+        "document_title": document_title,
+        "section_path": section_path,
+        "page": page_number,
+        "block_type": block_type,
+    }
+
+    blocks.append(Document(text=text, metadata=metadata))
+
+
+def build_contextual_documents(source: str, pages: list[ParsedPage]) -> list[Document]:
+    document_title = extract_document_title(source, pages)
+    heading_stack: list[str] = [document_title]
+    blocks: list[Document] = []
+
+    for page in pages:
+        block_lines: list[str] = []
+        block_type = "prose"
+
+        def flush_current() -> None:
+            nonlocal block_lines, block_type
+            flush_block(
+                blocks,
+                source=source,
+                document_title=document_title,
+                page_number=page.page_number,
+                heading_stack=heading_stack,
+                block_lines=block_lines,
+                block_type=block_type,
+            )
+            block_lines = []
+            block_type = "prose"
+
+        for raw_line in page.text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                flush_current()
+                continue
+
+            heading = split_heading(line)
+            if heading:
+                flush_current()
+                level, title = heading
+                relative_level = max(level - 1, 1)
+                heading_stack = heading_stack[:relative_level]
+                heading_stack.append(title)
+                continue
+
+            line_is_table = is_markdown_table_line(line)
+            if line_is_table:
+                if block_lines and block_type != "table":
+                    flush_current()
+                block_type = "table"
+                block_lines.append(line)
+                continue
+
+            if block_type == "table":
+                flush_current()
+
+            block_type = "prose"
+            block_lines.append(line)
+
+        flush_current()
+
+    merged: list[Document] = []
     for block in blocks:
-        cleaned = block.strip()
-        if not cleaned:
+        if (
+            merged
+            and merged[-1].metadata.get("page") == block.metadata.get("page")
+            and merged[-1].metadata.get("section_path") == block.metadata.get("section_path")
+            and merged[-1].metadata.get("block_type") == "table"
+            and block.metadata.get("block_type") == "prose"
+            and is_note_like_block(block.text)
+        ):
+            merged[-1].text = f"{merged[-1].text}\n\n{block.text}"
             continue
+        merged.append(block)
 
-        if is_markdown_table(cleaned):
-            if is_meaningful_text(cleaned, min_chars=20, min_words=3):
-                units.append(cleaned)
-            else:
-                skipped += 1
-            continue
-
-        if is_markdown_figure_block(cleaned) or cleaned.startswith("#"):
-            if is_meaningful_text(cleaned, min_chars=MIN_UNIT_CHARS, min_words=3):
-                units.append(cleaned)
-            else:
-                skipped += 1
-            continue
-
-        for sentence in split_sentences(cleaned):
-            units.append(sentence)
-
-    if skipped:
-        print(f"  Skipped {skipped} too-short markdown block(s).")
-
-    return units
+    return merged
 
 
-def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    denom = np.linalg.norm(a) * np.linalg.norm(b)
-    if denom == 0:
-        return 0.0
-    return float(np.dot(a, b) / denom)
+def chunk_documents(splitter: SentenceSplitter, documents: list[Document]) -> list[dict]:
+    chunk_records: list[dict] = []
+
+    for document in documents:
+        prefix = build_context_prefix(document.metadata)
+        block_type = str(document.metadata.get("block_type", "prose"))
+
+        if block_type == "table":
+            chunks = [document.text.strip()]
+        else:
+            nodes = splitter.get_nodes_from_documents([document])
+            chunks = [node.text.strip() for node in nodes if node.text.strip()]
+
+        for chunk in chunks:
+            injected = f"{prefix}\n{chunk}".strip()
+            if not is_meaningful_text(
+                injected,
+                min_chars=MIN_CHUNK_CHARS,
+                min_words=MIN_CHUNK_WORDS,
+            ):
+                continue
+            chunk_records.append(
+                {
+                    "content": injected,
+                    "metadata": {
+                        **document.metadata,
+                        "context_prefix": prefix,
+                        "char_count": len(injected),
+                        "word_count": word_count(injected),
+                        "embedding_model": EMBEDDING_MODEL,
+                        "parser": "llama-parse",
+                        "result_type": "markdown",
+                        "chunk_size": CHUNK_SIZE,
+                        "chunk_overlap": CHUNK_OVERLAP,
+                    },
+                }
+            )
+            print(
+                "  Created chunk length "
+                f"{len(injected)} chars, {word_count(injected)} words "
+                f"(section={document.metadata.get('section_path')})."
+            )
+
+    return chunk_records
 
 
 def embed_texts(client: OpenAI, texts: list[str]) -> list[list[float]]:
@@ -228,109 +335,16 @@ def embed_texts(client: OpenAI, texts: list[str]) -> list[list[float]]:
     return embeddings
 
 
-def compute_breakpoint_threshold(distances: list[float]) -> float:
-    if not distances:
-        return 1.0
-
-    percentile_threshold = float(np.percentile(distances, SEMANTIC_PERCENTILE))
-    fixed_distance = 1.0 - FIXED_SIMILARITY_FLOOR
-    return max(percentile_threshold, fixed_distance)
-
-
-def semantic_chunk_units(
-    units: list[str],
-    unit_embeddings: list[list[float]],
-) -> list[str]:
-    if not units:
-        return []
-
-    if len(units) != len(unit_embeddings):
-        raise ValueError("Unit and embedding counts must match.")
-
-    if len(units) == 1:
-        return [units[0]]
-
-    distances: list[float] = []
-    for index in range(1, len(units)):
-        previous = np.array(unit_embeddings[index - 1], dtype=np.float32)
-        current = np.array(unit_embeddings[index], dtype=np.float32)
-        distances.append(1.0 - cosine_similarity(previous, current))
-
-    breakpoint_threshold = compute_breakpoint_threshold(distances)
-    print(
-        f"  Semantic breakpoint threshold: {breakpoint_threshold:.4f} "
-        f"(percentile={SEMANTIC_PERCENTILE}, floor similarity={FIXED_SIMILARITY_FLOOR})",
-    )
-
-    chunks: list[str] = []
-    current_units = [units[0]]
-
-    for index in range(1, len(units)):
-        distance = distances[index - 1]
-        if distance >= breakpoint_threshold:
-            chunks.append("\n\n".join(current_units))
-            current_units = [units[index]]
-        else:
-            current_units.append(units[index])
-
-    if current_units:
-        chunks.append("\n\n".join(current_units))
-
-    return chunks
-
-
-def merge_small_chunks(chunks: list[str]) -> list[str]:
-    if not chunks:
-        return []
-
-    merged: list[str] = [chunks[0]]
-    for chunk in chunks[1:]:
-        previous = merged[-1]
-        if not is_meaningful_text(previous, min_chars=MIN_CHUNK_CHARS, min_words=MIN_CHUNK_WORDS):
-            merged[-1] = f"{previous}\n\n{chunk}".strip()
-        elif not is_meaningful_text(chunk, min_chars=MIN_CHUNK_CHARS, min_words=MIN_CHUNK_WORDS):
-            merged[-1] = f"{previous}\n\n{chunk}".strip()
-        else:
-            merged.append(chunk)
-
-    return merged
-
-
-def filter_valid_chunks(chunks: list[str]) -> list[str]:
-    valid: list[str] = []
-    dropped = 0
-
-    for chunk in chunks:
-        normalized = chunk.strip()
-        if is_meaningful_text(normalized, min_chars=MIN_CHUNK_CHARS, min_words=MIN_CHUNK_WORDS):
-            valid.append(normalized)
-            print(f"  Created chunk length {len(normalized)} chars, {word_count(normalized)} words.")
-        else:
-            dropped += 1
-
-    if dropped:
-        print(f"  Dropped {dropped} invalid micro-chunk(s).")
-
-    return valid
-
-
 def truncate_document_chunks(supabase: Client) -> None:
     print("Clearing document_chunks table...")
     deleted = 0
-
     while True:
-        response = (
-            supabase.table("document_chunks")
-            .select("id")
-            .limit(INSERT_BATCH_SIZE)
-            .execute()
-        )
+        response = supabase.table("document_chunks").select("id").limit(INSERT_BATCH_SIZE).execute()
         ids = [row["id"] for row in (response.data or [])]
         if not ids:
             break
         supabase.table("document_chunks").delete().in_("id", ids).execute()
         deleted += len(ids)
-
     print(f"Cleared {deleted} row(s) from document_chunks.")
 
 
@@ -345,74 +359,48 @@ def ingest_pdf(
     openai_client: OpenAI,
     supabase: Client,
     parser: LlamaParse,
+    splitter: SentenceSplitter,
     pdf_path: Path,
 ) -> int:
     source = pdf_path.name
     print(f"Processing {source}...")
 
-    page_documents = parse_pdf_markdown(parser, pdf_path)
-    semantic_chunks: list[str] = []
-    chunk_pages: list[int | None] = []
-
-    for page_document in page_documents:
-        page_number = page_document["page"]
-        units = split_markdown_units(page_document["text"])
-        units = [
-            unit
-            for unit in units
-            if is_meaningful_text(unit, min_chars=MIN_UNIT_CHARS, min_words=MIN_UNIT_WORDS)
-            or is_markdown_table(unit)
-        ]
-
-        if not units:
-            print(f"  Page {page_number}: no valid units after filtering.")
-            continue
-
-        print(f"  Page {page_number}: {len(units)} valid unit(s) for semantic chunking.")
-        unit_embeddings = embed_texts(openai_client, units)
-        page_chunks = semantic_chunk_units(units, unit_embeddings)
-        page_chunks = merge_small_chunks(page_chunks)
-        page_chunks = filter_valid_chunks(page_chunks)
-
-        for chunk in page_chunks:
-            semantic_chunks.append(chunk)
-            chunk_pages.append(page_number)
-
-    if not semantic_chunks:
-        print(f"  Skipped {source}: no valid semantic chunks produced.")
+    pages = parse_pdf_markdown(parser, pdf_path)
+    contextual_documents = build_contextual_documents(source, pages)
+    if not contextual_documents:
+        print(f"  Skipped {source}: no contextual blocks produced.")
         return 0
 
-    print(f"  Generated {len(semantic_chunks)} valid semantic chunk(s).")
-    chunk_embeddings = embed_texts(openai_client, semantic_chunks)
+    print(f"  Built {len(contextual_documents)} contextual document block(s).")
+    chunk_records = chunk_documents(splitter, contextual_documents)
+    if not chunk_records:
+        print(f"  Skipped {source}: no valid chunks produced.")
+        return 0
 
-    rows = [
-        {
-            "content": chunk,
-            "embedding": embedding,
-            "metadata": {
-                "source": source,
-                "chunk_index": index,
-                "chunk_count": len(semantic_chunks),
-                "page": chunk_pages[index],
-                "char_count": len(chunk),
-                "word_count": word_count(chunk),
-                "semantic_percentile": SEMANTIC_PERCENTILE,
-                "embedding_model": EMBEDDING_MODEL,
-                "parser": "llama-parse",
-                "result_type": "markdown",
-            },
-        }
-        for index, (chunk, embedding) in enumerate(zip(semantic_chunks, chunk_embeddings, strict=True))
-    ]
+    print(f"  Generated {len(chunk_records)} valid chunk(s).")
+    embeddings = embed_texts(openai_client, [record["content"] for record in chunk_records])
+
+    rows = []
+    for index, (record, embedding) in enumerate(zip(chunk_records, embeddings, strict=True)):
+        rows.append(
+            {
+                "content": record["content"],
+                "embedding": embedding,
+                "metadata": {
+                    **record["metadata"],
+                    "chunk_index": index,
+                    "chunk_count": len(chunk_records),
+                },
+            }
+        )
 
     insert_chunk_batches(supabase, rows)
-    print(f"  Stored {len(rows)} semantic chunks from {source}.")
+    print(f"  Stored {len(rows)} contextual chunks from {source}.")
     return len(rows)
 
 
 def collect_pdf_files() -> list[Path]:
     paths: dict[str, Path] = {}
-
     if DOCS_DIR.exists():
         for pdf_path in DOCS_DIR.glob("*.pdf"):
             paths[str(pdf_path.resolve())] = pdf_path.resolve()
@@ -443,29 +431,27 @@ def main() -> int:
 
     pdf_files = collect_pdf_files()
     if not pdf_files:
-        print(
-            f"No PDF files found. Add files to {DOCS_DIR} "
-            "or set INGEST_PDF_PATH in .env.",
-        )
+        print(f"No PDF files found. Add files to {DOCS_DIR} or set INGEST_PDF_PATH in .env.")
         return 1
 
     openai_client = OpenAI(api_key=openai_api_key)
     supabase = create_client(supabase_url, supabase_key)
     parser = create_llama_parser()
+    splitter = create_splitter()
 
     truncate_document_chunks(supabase)
 
     total_chunks = 0
     for pdf_path in pdf_files:
-        total_chunks += ingest_pdf(openai_client, supabase, parser, pdf_path)
+        total_chunks += ingest_pdf(openai_client, supabase, parser, splitter, pdf_path)
 
-    print(f"Done. Ingested {total_chunks} valid chunks from {len(pdf_files)} PDF file(s).")
+    print(f"Done. Ingested {total_chunks} contextual chunks from {len(pdf_files)} PDF file(s).")
     return 0
 
 
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except Exception as error:  # noqa: BLE001 - CLI entrypoint
+    except Exception as error:  # noqa: BLE001
         print(f"ingest.py failed: {error}", file=sys.stderr)
         raise SystemExit(1) from error

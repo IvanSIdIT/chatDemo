@@ -16,7 +16,7 @@ export const RAG_EMBEDDING_DIMENSIONS = 1536;
 
 const DEFAULT_RPC_THRESHOLD = 0;
 const DEFAULT_APP_THRESHOLD = Number(process.env.RAG_MATCH_THRESHOLD ?? "0.35");
-const DEFAULT_MATCH_COUNT = 8;
+const DEFAULT_MATCH_COUNT = Number(process.env.RAG_SIMILARITY_TOP_K ?? "6");
 const MIN_CHUNK_CHARS = 20;
 const MIN_CHUNK_WORDS = 3;
 
@@ -149,6 +149,7 @@ export function buildRagSystemPrompt(chunks: MatchedChunk[]): string {
       "No relevant instruction excerpts were found in the knowledge base for this question.",
       "Reply politely in the same language as the user and say that you do not have this information in the available instructions.",
       "Do not invent technical details, part numbers, or procedures.",
+      "If the question asks about table values or numeric ranges and the context is missing, explicitly say that the table data was not found in the retrieved instructions.",
     ].join("\n");
   }
 
@@ -163,6 +164,10 @@ export function buildRagSystemPrompt(chunks: MatchedChunk[]): string {
     "You are a factory line assistant.",
     "Answer the employee's question strictly based on the instruction context below.",
     "If the context does not contain enough information, say politely that you do not have this information in the instructions. Do not invent details.",
+    "Treat markdown tables as authoritative structured data. Read rows and columns carefully before answering.",
+    "When comparing negative temperatures, verify the math explicitly: -15°C is colder than -7°C.",
+    "For viscosity recommendations, ensure lower temperature conditions align with lower-temperature suitable viscosity grades according to the retrieved table, not intuition.",
+    "When the answer depends on ppm limits, hardness, chlorides, sulfates, or other tabular specs, quote the value exactly from the retrieved context.",
     "",
     "Instruction context:",
     context,
