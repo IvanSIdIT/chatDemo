@@ -3,10 +3,27 @@ import { unlink } from "node:fs/promises";
 
 import { requireManagerRequest } from "@/lib/api-auth";
 import {
-  isIngestRuntimeAvailable,
+  canSpawnLocalIngest,
   queueIngestJob,
+  sanitizePdfFilename,
   saveUploadedPdf,
 } from "@/lib/ingest-runner";
+import { hasRemoteIngestWorker, triggerRemoteIngest } from "@/lib/ingest-remote";
+import { uploadPdfToStorage } from "@/lib/rag-storage";
+
+type UploadMode = "local" | "worker" | "stored";
+
+function buildQueuedMessage(mode: UploadMode): string {
+  if (mode === "local") {
+    return "File uploaded successfully and queued for local AI processing. Vectorization may take several minutes.";
+  }
+
+  if (mode === "worker") {
+    return "File uploaded to cloud storage and queued on the ingest worker. Vectorization may take several minutes.";
+  }
+
+  return "File uploaded to cloud storage. Configure INGEST_WORKER_URL on Vercel or run npm run ingest locally to process it.";
+}
 
 export const Route = createFileRoute("/api/admin/upload-knowledge")({
   server: {
@@ -17,17 +34,8 @@ export const Route = createFileRoute("/api/admin/upload-knowledge")({
           return auth.response;
         }
 
-        if (!isIngestRuntimeAvailable()) {
-          return new Response(
-            JSON.stringify({
-              error:
-                "RAG ingest is not available in this deployment. Use npm run ingest locally or run the app on a server with Python installed.",
-            }),
-            { status: 503, headers: { "Content-Type": "application/json" } },
-          );
-        }
-
         let savedPath: string | undefined;
+        let storagePath: string | undefined;
 
         try {
           const formData = await request.formData();
@@ -40,26 +48,71 @@ export const Route = createFileRoute("/api/admin/upload-knowledge")({
             });
           }
 
-          const saved = await saveUploadedPdf(fileEntry);
-          savedPath = saved.absolutePath;
+          const fileName = sanitizePdfFilename(fileEntry.name);
 
-          const job = queueIngestJob(saved.absolutePath);
+          try {
+            const stored = await uploadPdfToStorage(fileEntry, fileName);
+            storagePath = stored.storagePath;
+          } catch (storageError) {
+            console.error("[api/admin/upload-knowledge] storage upload failed:", storageError);
+            if (!canSpawnLocalIngest()) {
+              throw storageError;
+            }
+          }
 
-          console.log("[api/admin/upload-knowledge] queued ingest", {
-            jobId: job.jobId,
-            fileName: saved.fileName,
-            managerId: auth.userId,
-            pdfPath: job.pdfPath,
-            logPath: job.logPath,
-          });
+          let mode: UploadMode = "stored";
+          let jobId = randomUUID();
+
+          if (canSpawnLocalIngest()) {
+            const saved = await saveUploadedPdf(fileEntry);
+            savedPath = saved.absolutePath;
+            const job = queueIngestJob(saved.absolutePath);
+            jobId = job.jobId;
+            mode = "local";
+
+            console.log("[api/admin/upload-knowledge] queued local ingest", {
+              jobId: job.jobId,
+              fileName,
+              managerId: auth.userId,
+              pdfPath: job.pdfPath,
+              storagePath,
+            });
+          } else if (hasRemoteIngestWorker() && storagePath) {
+            const remoteJob = await triggerRemoteIngest(storagePath, fileName);
+            jobId = remoteJob.jobId;
+            mode = "worker";
+
+            console.log("[api/admin/upload-knowledge] queued remote ingest", {
+              jobId,
+              fileName,
+              managerId: auth.userId,
+              storagePath,
+            });
+          } else if (storagePath) {
+            console.log("[api/admin/upload-knowledge] stored only", {
+              jobId,
+              fileName,
+              managerId: auth.userId,
+              storagePath,
+            });
+          } else {
+            return new Response(
+              JSON.stringify({
+                error:
+                  "Could not store the PDF. Configure Supabase Storage bucket rag-pdfs or run the app locally with Python installed.",
+              }),
+              { status: 503, headers: { "Content-Type": "application/json" } },
+            );
+          }
 
           return new Response(
             JSON.stringify({
               status: "queued",
-              jobId: job.jobId,
-              fileName: saved.fileName,
-              message:
-                "File uploaded successfully and queued for AI processing. Vectorization may take several minutes.",
+              mode,
+              jobId,
+              fileName,
+              storagePath: storagePath ?? null,
+              message: buildQueuedMessage(mode),
             }),
             {
               status: 202,

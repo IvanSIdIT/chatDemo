@@ -19,8 +19,20 @@ export type IngestJobInfo = {
   pdfPath: string;
 };
 
+export function canSpawnLocalIngest(): boolean {
+  if (process.env.INGEST_DISABLE_LOCAL_SPAWN === "true") {
+    return false;
+  }
+
+  if (process.env.VERCEL === "1") {
+    return false;
+  }
+
+  return resolvePythonCommand() !== null;
+}
+
 export function isIngestRuntimeAvailable(): boolean {
-  return process.env.VERCEL !== "1" && resolvePythonCommand() !== null;
+  return canSpawnLocalIngest();
 }
 
 export function getUploadsDirectory(): string {

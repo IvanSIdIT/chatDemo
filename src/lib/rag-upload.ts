@@ -2,8 +2,10 @@ import { supabase } from "@/lib/supabase";
 
 export type RagUploadResponse = {
   status: "queued";
+  mode: "local" | "worker" | "stored";
   jobId: string;
   fileName: string;
+  storagePath: string | null;
   message: string;
 };
 

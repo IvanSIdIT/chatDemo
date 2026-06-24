@@ -38,8 +38,8 @@ export function RagUploadForm() {
 
     try {
       const result = await uploadKnowledgePdf(selectedFile);
-      setStatus("queued");
-      setMessage(`${result.message} (job: ${result.jobId.slice(0, 8)})`);
+      setStatus(result.mode === "stored" ? "queued" : "queued");
+      setMessage(result.message);
       setSelectedFile(null);
       if (inputRef.current) {
         inputRef.current.value = "";
