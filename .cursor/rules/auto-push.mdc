@@ -1,0 +1,40 @@
+---
+description: Commit and push to main immediately after each completed code change
+alwaysApply: true
+---
+
+# Auto push after changes
+
+After every completed task that modifies the repository:
+
+1. Commit the relevant changes with a concise message focused on **why**.
+2. Push to `origin/main` immediately — do not wait for the user to ask.
+3. Confirm the commit hash and push result in the final reply.
+
+## Git safety (Lovable-connected repo)
+
+- Never force-push, rebase, amend, or squash commits that are already on `main`.
+- Never commit `.env`, credentials, or other secret files.
+- Keep `main` in a working state so Lovable sync stays healthy.
+
+## What to exclude from commits
+
+- `.env` and local secrets
+- Large binary assets unless the user explicitly asked to add them (e.g. `docs/*.pdf`)
+
+## When not to push
+
+- Question-only or review-only tasks with no file changes
+- The user explicitly says not to commit or push in that turn
+
+## Commit workflow
+
+```bash
+git status
+git diff
+git add <relevant files>
+git commit -m "..."
+git push origin main
+```
+
+If push is blocked, tell the user and leave changes committed locally.

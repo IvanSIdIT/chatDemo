@@ -5,6 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/lib/supabase";
 
+const CHAT_SESSION_ID =
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `chat-${Date.now()}`;
+
 const WELCOME_MESSAGE: UIMessage = {
   id: "welcome",
   role: "assistant",
@@ -33,7 +38,14 @@ export function ChatComponent() {
         headers: async () => {
           const { data } = await supabase.auth.getSession();
           const token = data.session?.access_token;
-          return token ? { Authorization: `Bearer ${token}` } : {};
+          return token
+            ? {
+                Authorization: `Bearer ${token}`,
+                "X-Chat-Session-Id": CHAT_SESSION_ID,
+              }
+            : {
+                "X-Chat-Session-Id": CHAT_SESSION_ID,
+              };
         },
       }),
     [],

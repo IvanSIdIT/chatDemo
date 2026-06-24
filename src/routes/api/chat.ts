@@ -1,6 +1,10 @@
 import { openai } from "@ai-sdk/openai";
 import { createFileRoute } from "@tanstack/react-router";
-import { startActiveObservation, updateActiveObservation } from "@langfuse/tracing";
+import {
+  propagateAttributes,
+  startActiveObservation,
+  updateActiveObservation,
+} from "@langfuse/tracing";
 import { convertToModelMessages, streamText, type UIMessage } from "ai";
 
 import {
@@ -8,13 +12,20 @@ import {
   getUIMessageText,
   saveEmployeeMessage,
 } from "@/lib/chat-persistence";
-import { flushLangfuse, isLangfuseEnabled } from "@/lib/langfuse";
+import { ensureLangfuseTracing, flushLangfuse, isLangfuseEnabled } from "@/lib/langfuse";
 import { buildRagSystemPrompt, retrieveChunks, type MatchedChunk } from "@/lib/rag";
 import {
   createSupabaseServerClient,
   createSupabaseServiceClient,
   getAccessTokenFromRequest,
 } from "@/lib/supabase-server";
+
+const CHAT_SESSION_HEADER = "x-chat-session-id";
+
+type AuthenticatedUser = {
+  id: string;
+  email: string | null;
+};
 
 function summarizeChunksForTracing(chunks: MatchedChunk[]) {
   return chunks.map((chunk) => ({
@@ -27,9 +38,55 @@ function summarizeChunksForTracing(chunks: MatchedChunk[]) {
   }));
 }
 
+function getChatSessionId(request: Request, userId: string): string {
+  const headerValue = request.headers.get(CHAT_SESSION_HEADER)?.trim();
+  if (headerValue) {
+    return headerValue.slice(0, 200);
+  }
+
+  return `user:${userId}`.slice(0, 200);
+}
+
+async function authenticateRequest(request: Request): Promise<
+  | { ok: true; user: AuthenticatedUser; accessToken: string }
+  | { ok: false; response: Response }
+> {
+  const accessToken = getAccessTokenFromRequest(request);
+  if (!accessToken) {
+    return {
+      ok: false,
+      response: new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      }),
+    };
+  }
+
+  const supabase = createSupabaseServerClient(accessToken);
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return {
+      ok: false,
+      response: new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      }),
+    };
+  }
+
+  return {
+    ok: true,
+    user: { id: user.id, email: user.email ?? null },
+    accessToken,
+  };
+}
+
 async function retrieveChunksWithTracing(
   userText: string,
-  userId: string,
 ): Promise<{ chunks: MatchedChunk[]; ragSystemPrompt: string; ragError?: string }> {
   const retrieve = async () => {
     try {
@@ -64,11 +121,11 @@ async function retrieveChunksWithTracing(
     "rag-retrieval",
     async (retriever) => {
       retriever.update({
-        input: { query: userText, userId },
+        input: { query: userText },
         metadata: {
           hybridEnabled: process.env.RAG_ENABLE_HYBRID ?? "true",
-          topK: Number(process.env.RAG_SIMILARITY_TOP_K ?? "8"),
-          candidatesPerQuery: Number(process.env.RAG_NUM_CHUNKS_PER_QUERY ?? "10"),
+          topK: String(process.env.RAG_SIMILARITY_TOP_K ?? "8"),
+          candidatesPerQuery: String(process.env.RAG_NUM_CHUNKS_PER_QUERY ?? "10"),
         },
       });
 
@@ -83,7 +140,7 @@ async function retrieveChunksWithTracing(
           hasContext: result.chunks.length > 0,
         },
         metadata: {
-          promptLength: result.ragSystemPrompt.length,
+          promptLength: String(result.ragSystemPrompt.length),
         },
       });
 
@@ -93,7 +150,10 @@ async function retrieveChunksWithTracing(
   );
 }
 
-async function handleChatRequest(request: Request): Promise<Response> {
+async function handleChatRequest(
+  request: Request,
+  auth: { user: AuthenticatedUser; accessToken: string },
+): Promise<Response> {
   if (!process.env.OPENAI_API_KEY) {
     return new Response(JSON.stringify({ error: "OPENAI_API_KEY is not configured on the server." }), {
       status: 500,
@@ -101,129 +161,136 @@ async function handleChatRequest(request: Request): Promise<Response> {
     });
   }
 
-  const accessToken = getAccessTokenFromRequest(request);
-  if (!accessToken) {
-    return new Response(JSON.stringify({ error: "Unauthorized" }), {
-      status: 401,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
-  const supabase = createSupabaseServerClient(accessToken);
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser();
-
-  if (authError || !user) {
-    return new Response(JSON.stringify({ error: "Unauthorized" }), {
-      status: 401,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
+  const supabase = createSupabaseServerClient(auth.accessToken);
   const { messages }: { messages: UIMessage[] } = await request.json();
   const lastUserMessage = getLastUserMessage(messages);
   const userText = lastUserMessage ? getUIMessageText(lastUserMessage) : "";
+  const sessionId = getChatSessionId(request, auth.user.id);
 
-  if (isLangfuseEnabled()) {
-    updateActiveObservation({
-      input: {
-        query: userText,
-        userId: user.id,
-        userEmail: user.email ?? "unknown",
-      },
-    });
-  }
-
-  if (userText) {
-    try {
-      await saveEmployeeMessage(supabase, userText, "pending");
-    } catch (error) {
-      console.error("[api/chat] failed to save user message:", error);
-      return new Response(JSON.stringify({ error: "Failed to save employee message." }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
+  const runChat = async (): Promise<Response> => {
+    if (isLangfuseEnabled()) {
+      updateActiveObservation({
+        input: { query: userText, messageCount: messages.length },
       });
     }
-  }
 
-  const modelMessages = await convertToModelMessages(messages);
-  let ragSystemPrompt: string | undefined;
-  let retrievedChunkCount = 0;
-  let ragError: string | undefined;
-
-  if (userText) {
-    const ragResult = await retrieveChunksWithTracing(userText, user.id);
-    retrievedChunkCount = ragResult.chunks.length;
-    ragSystemPrompt = ragResult.ragSystemPrompt;
-    ragError = ragResult.ragError;
-
-    console.log("[api/chat] Final RAG chunks used:", retrievedChunkCount);
-    if (ragError) {
-      console.error("[api/chat] RAG retrieval failed:", ragError);
+    if (userText) {
+      try {
+        await saveEmployeeMessage(supabase, userText, "pending");
+      } catch (error) {
+        console.error("[api/chat] failed to save user message:", error);
+        return new Response(JSON.stringify({ error: "Failed to save employee message." }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
     }
+
+    const modelMessages = await convertToModelMessages(messages);
+    let ragSystemPrompt: string | undefined;
+    let retrievedChunkCount = 0;
+    let ragError: string | undefined;
+
+    if (userText) {
+      const ragResult = await retrieveChunksWithTracing(userText);
+      retrievedChunkCount = ragResult.chunks.length;
+      ragSystemPrompt = ragResult.ragSystemPrompt;
+      ragError = ragResult.ragError;
+
+      console.log("[api/chat] Final RAG chunks used:", retrievedChunkCount);
+      if (ragError) {
+        console.error("[api/chat] RAG retrieval failed:", ragError);
+      }
+    }
+
+    const result = streamText({
+      model: openai("gpt-4o"),
+      system: ragSystemPrompt,
+      messages: modelMessages,
+      experimental_telemetry: {
+        isEnabled: isLangfuseEnabled(),
+        functionId: "factory-chat-generation",
+        metadata: {
+          sessionId,
+          retrievedChunkCount: String(retrievedChunkCount),
+          ragError: ragError ?? "",
+          hasRagContext: String(retrievedChunkCount > 0),
+        },
+      },
+      onFinish: async ({ text, usage, finishReason }) => {
+        if (isLangfuseEnabled()) {
+          updateActiveObservation({
+            output: {
+              text,
+              finishReason,
+              usage,
+              retrievedChunkCount,
+              hasRagContext: retrievedChunkCount > 0,
+            },
+          });
+        }
+
+        await flushLangfuse();
+      },
+    });
+
+    return result.toUIMessageStreamResponse({
+      headers: {
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      },
+    });
+  };
+
+  if (!isLangfuseEnabled()) {
+    return runChat();
   }
 
-  const result = streamText({
-    model: openai("gpt-4o"),
-    system: ragSystemPrompt,
-    messages: modelMessages,
-    experimental_telemetry: {
-      isEnabled: isLangfuseEnabled(),
-      functionId: "factory-chat",
+  return propagateAttributes(
+    {
+      userId: auth.user.id,
+      sessionId,
+      traceName: "factory-chat",
+      tags: ["factory-chat", "rag"],
       metadata: {
-        userId: user.id,
-        userEmail: user.email ?? "unknown",
-        retrievedChunkCount,
-        ragError: ragError ?? "",
+        feature: "worker-chat",
+        route: "/api/chat",
       },
     },
-    onFinish: async () => {
-      await flushLangfuse();
-    },
-  });
+    () =>
+      startActiveObservation(
+        "factory-chat",
+        async (span) => {
+          const response = await runChat();
 
-  return result.toUIMessageStreamResponse({
-    headers: {
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    },
-  });
+          span.update({
+            output: {
+              status: response.status,
+              ok: response.ok,
+            },
+          });
+
+          return response;
+        },
+        { asType: "chain" },
+      ),
+  );
 }
 
 export const Route = createFileRoute("/api/chat")({
   server: {
     handlers: {
       POST: async ({ request }) => {
+        ensureLangfuseTracing();
+
         try {
-          if (!isLangfuseEnabled()) {
-            return await handleChatRequest(request);
+          const auth = await authenticateRequest(request);
+          if (!auth.ok) {
+            return auth.response;
           }
 
-          return await startActiveObservation(
-            "factory-chat",
-            async (span) => {
-              span.update({
-                metadata: {
-                  route: "/api/chat",
-                },
-              });
-
-              const response = await handleChatRequest(request);
-
-              span.update({
-                output: {
-                  status: response.status,
-                  ok: response.ok,
-                },
-              });
-
-              return response;
-            },
-            { asType: "chain" },
-          );
+          return await handleChatRequest(request, auth);
         } catch (error) {
           console.error("[api/chat] POST failed:", error);
           await flushLangfuse();

@@ -1,12 +1,10 @@
 import { loadEnv } from "vite";
 
 import "./lib/error-capture";
-import { ensureLangfuseTracing } from "./lib/langfuse";
-
-ensureLangfuseTracing();
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
+import { ensureLangfuseTracing } from "./lib/langfuse";
 
 const serverEnv = loadEnv(
   process.env.NODE_ENV ?? "development",
@@ -14,6 +12,7 @@ const serverEnv = loadEnv(
   "",
 );
 Object.assign(process.env, serverEnv);
+ensureLangfuseTracing();
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;

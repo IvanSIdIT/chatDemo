@@ -16,7 +16,12 @@ export function ensureLangfuseTracing(): void {
 
   spanProcessor = new LangfuseSpanProcessor({
     exportMode: process.env.VERCEL ? "immediate" : "batched",
-    environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? "development",
+    environment:
+      process.env.LANGFUSE_TRACING_ENVIRONMENT ??
+      process.env.VERCEL_ENV ??
+      process.env.NODE_ENV ??
+      "development",
+    release: process.env.LANGFUSE_RELEASE ?? process.env.VERCEL_GIT_COMMIT_SHA,
     flushInterval: Number(process.env.LANGFUSE_FLUSH_INTERVAL ?? "1"),
   });
 
