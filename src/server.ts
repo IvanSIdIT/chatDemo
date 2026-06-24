@@ -1,6 +1,9 @@
 import { loadEnv } from "vite";
 
 import "./lib/error-capture";
+import { ensureLangfuseTracing } from "./lib/langfuse";
+
+ensureLangfuseTracing();
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
