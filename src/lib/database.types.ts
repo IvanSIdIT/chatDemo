@@ -88,6 +88,18 @@ export type Database = {
           similarity: number;
         }[];
       };
+      match_chunks_keyword: {
+        Args: {
+          search_query: string;
+          match_count?: number;
+        };
+        Returns: {
+          id: string;
+          content: string;
+          metadata: Record<string, unknown> | null;
+          rank: number;
+        }[];
+      };
     };
     Enums: {
       user_role: UserRole;

@@ -71,8 +71,9 @@ export const Route = createFileRoute("/api/chat")({
               const ragSupabase = createSupabaseServiceClient();
               const chunks = await retrieveChunks(ragSupabase, userText, {
                 rpcThreshold: 0,
-                appThreshold: Number(process.env.RAG_MATCH_THRESHOLD ?? "0.35"),
-                limit: Number(process.env.RAG_SIMILARITY_TOP_K ?? "6"),
+                appThreshold: Number(process.env.RAG_MATCH_THRESHOLD ?? "0.3"),
+                limit: Number(process.env.RAG_SIMILARITY_TOP_K ?? "8"),
+                candidatesPerQuery: Number(process.env.RAG_NUM_CHUNKS_PER_QUERY ?? "10"),
                 logLabel: "[api/chat]",
               });
 

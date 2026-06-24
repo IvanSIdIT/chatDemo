@@ -15,6 +15,7 @@
     "format": "prettier --write .",
     "setup:supabase": "node scripts/finish-supabase-setup.mjs",
     "setup:rag": "node --env-file=.env scripts/apply-rag-migration.mjs",
+    "setup:hybrid": "node --env-file=.env scripts/apply-hybrid-migration.mjs",
     "ingest": "node --env-file=.env scripts/run-ingest.mjs"
   },
   "dependencies": {
