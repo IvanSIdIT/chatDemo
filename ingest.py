@@ -265,7 +265,11 @@ def build_contextual_documents(source: str, pages: list[ParsedPage]) -> list[Doc
             and block.metadata.get("block_type") == "prose"
             and is_note_like_block(block.text)
         ):
-            merged[-1].text = f"{merged[-1].text}\n\n{block.text}"
+            previous = merged[-1]
+            merged[-1] = Document(
+                text=f"{previous.text}\n\n{block.text}",
+                metadata=previous.metadata,
+            )
             continue
         merged.append(block)
 
