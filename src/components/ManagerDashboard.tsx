@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -18,6 +19,31 @@ import {
   type EmployeeMessageWithEmail,
 } from "@/lib/messages";
 import { supabase } from "@/lib/supabase";
+
+const MESSAGE_PREVIEW_CHAR_LIMIT = 200;
+
+function EmployeeMessageContent({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = content.length > MESSAGE_PREVIEW_CHAR_LIMIT;
+  const preview = `${content.slice(0, MESSAGE_PREVIEW_CHAR_LIMIT).trimEnd()}…`;
+
+  return (
+    <div className="max-w-md space-y-1">
+      <p className="whitespace-pre-wrap text-sm">{expanded || !isLong ? content : preview}</p>
+      {isLong ? (
+        <Button
+          type="button"
+          variant="link"
+          size="sm"
+          className="h-auto p-0 text-xs text-primary"
+          onClick={() => setExpanded((current) => !current)}
+        >
+          {expanded ? "Свернуть" : "Показать полностью"}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
 
 function mergeMessage(
   current: EmployeeMessageWithEmail[],
@@ -166,7 +192,9 @@ function EmployeeMessagesPanel() {
                   {formatMessageStatus(message.status)}
                 </Badge>
               </TableCell>
-              <TableCell className="max-w-md whitespace-pre-wrap">{message.content}</TableCell>
+              <TableCell>
+                <EmployeeMessageContent content={message.content} />
+              </TableCell>
               <TableCell className="text-muted-foreground">
                 {new Date(message.created_at).toLocaleString()}
               </TableCell>
