@@ -9,6 +9,49 @@ import type { Database } from "@/lib/database.types";
 
 type ServiceClient = SupabaseClient<Database>;
 
+export async function deleteIngestedChunksForSource(
+  supabase: ServiceClient,
+  source: string,
+): Promise<number> {
+  const { count, error: countError } = await supabase
+    .from("document_chunks")
+    .select("id", { count: "exact", head: true })
+    .contains("metadata", { source });
+
+  if (countError) {
+    throw new Error(`Failed to count document chunks: ${countError.message}`);
+  }
+
+  const { error } = await supabase
+    .from("document_chunks")
+    .delete()
+    .contains("metadata", { source });
+
+  if (error) {
+    throw new Error(`Failed to delete document chunks: ${error.message}`);
+  }
+
+  return count ?? 0;
+}
+
+export async function deleteAllIngestedChunks(supabase: ServiceClient): Promise<number> {
+  const { count, error: countError } = await supabase
+    .from("document_chunks")
+    .select("id", { count: "exact", head: true });
+
+  if (countError) {
+    throw new Error(`Failed to count document chunks: ${countError.message}`);
+  }
+
+  const { error } = await supabase.from("document_chunks").delete().not("id", "is", null);
+
+  if (error) {
+    throw new Error(`Failed to delete document chunks: ${error.message}`);
+  }
+
+  return count ?? 0;
+}
+
 export async function deleteStorageObjectsForSource(
   supabase: ServiceClient,
   source: string,

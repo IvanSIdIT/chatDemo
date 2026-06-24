@@ -7,7 +7,9 @@ import {
   matchesRagDocumentSource,
 } from "@/lib/rag-document-sources";
 import {
+  deleteAllIngestedChunks,
   deleteAllStorageUploads,
+  deleteIngestedChunksForSource,
   deleteStorageObjectsForSource,
 } from "@/lib/rag-document-cleanup";
 import { RAG_PDF_BUCKET } from "@/lib/rag-storage";
@@ -134,37 +136,21 @@ export const Route = createFileRoute("/api/admin/ingested-documents")({
           const serviceSupabase = createSupabaseServiceClient();
 
           if (body?.deleteAll) {
+            let deletedDocuments = 0;
             const { data: existingRows, error: listError } =
               await userSupabase.rpc("list_ingested_documents");
 
-            if (listError) {
-              console.error("[api/admin/ingested-documents] list before delete all failed:", listError);
-              return new Response(JSON.stringify({ error: "Failed to delete all ingested documents." }), {
-                status: 500,
-                headers: { "Content-Type": "application/json" },
-              });
+            if (!listError) {
+              deletedDocuments = (existingRows ?? []).length;
             }
 
-            const deletedDocuments = (existingRows ?? []).length;
-
-            const { data: deletedChunks, error } = await userSupabase.rpc(
-              "delete_all_ingested_documents",
-            );
-
-            if (error) {
-              console.error("[api/admin/ingested-documents] delete all rpc failed:", error);
-              return new Response(JSON.stringify({ error: "Failed to delete all ingested documents." }), {
-                status: 500,
-                headers: { "Content-Type": "application/json" },
-              });
-            }
-
+            const deletedChunks = await deleteAllIngestedChunks(serviceSupabase);
             const deletedStorageObjects = await deleteAllStorageUploads(serviceSupabase);
 
             return new Response(
               JSON.stringify({
                 deletedDocuments,
-                deletedChunks: Number(deletedChunks ?? 0),
+                deletedChunks,
                 deletedStorageObjects,
               }),
               {
@@ -183,16 +169,17 @@ export const Route = createFileRoute("/api/admin/ingested-documents")({
             });
           }
 
-          const { data: deletedChunks, error } = await userSupabase.rpc("delete_ingested_document", {
-            p_source: source,
-          });
+          let deletedChunks = 0;
+          const { data: rpcDeletedChunks, error: rpcError } = await userSupabase.rpc(
+            "delete_ingested_document",
+            { p_source: source },
+          );
 
-          if (error) {
-            console.error("[api/admin/ingested-documents] delete rpc failed:", error);
-            return new Response(JSON.stringify({ error: "Failed to delete ingested document." }), {
-              status: 500,
-              headers: { "Content-Type": "application/json" },
-            });
+          if (rpcError) {
+            console.warn("[api/admin/ingested-documents] delete rpc failed, using service fallback:", rpcError);
+            deletedChunks = await deleteIngestedChunksForSource(serviceSupabase, source);
+          } else {
+            deletedChunks = Number(rpcDeletedChunks ?? 0);
           }
 
           const deletedStorageObjects = await deleteStorageObjectsForSource(serviceSupabase, source);
@@ -209,8 +196,11 @@ export const Route = createFileRoute("/api/admin/ingested-documents")({
             },
           );
         } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Failed to delete ingested document.";
           console.error("[api/admin/ingested-documents] delete unexpected error:", error);
-          return new Response(JSON.stringify({ error: "Failed to delete ingested document." }), {
+
+          return new Response(JSON.stringify({ error: message }), {
             status: 500,
             headers: { "Content-Type": "application/json" },
           });
