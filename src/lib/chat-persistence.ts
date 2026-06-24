@@ -38,7 +38,7 @@ export async function saveEmployeeMessage(
       content: trimmed,
       status,
     })
-    .select("id, employee_id, content, status, created_at")
+    .select("id, employee_id, content, status, action_plan, action_plan_status, created_at")
     .single();
 
   if (error) {

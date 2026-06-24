@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { EmployeeActionPlanCell } from "@/components/EmployeeActionPlanCell";
 import { EmployeeMessageContent } from "@/components/EmployeeMessageContent";
 import {
   Table,
@@ -18,6 +19,27 @@ import {
   type EmployeeMessageWithEmail,
 } from "@/lib/messages";
 import { supabase } from "@/lib/supabase";
+
+function mergeMessageUpdate(
+  current: EmployeeMessageWithEmail[],
+  updated: EmployeeMessage,
+): EmployeeMessageWithEmail[] {
+  const index = current.findIndex((row) => row.id === updated.id);
+  if (index === -1) {
+    return mergeMessage(current, updated);
+  }
+
+  const existing = current[index];
+  return current.map((row) =>
+    row.id === updated.id
+      ? {
+          ...row,
+          ...updated,
+          employee_email: existing.employee_email,
+        }
+      : row,
+  );
+}
 
 function mergeMessage(
   current: EmployeeMessageWithEmail[],
@@ -98,6 +120,9 @@ function EmployeeMessagesPanel() {
           );
         });
       },
+      (updated) => {
+        setMessages((current) => mergeMessageUpdate(current, updated));
+      },
       (subscriptionError) => {
         setError(subscriptionError.message);
       },
@@ -172,7 +197,13 @@ function EmployeeMessagesPanel() {
               <TableCell className="text-muted-foreground">
                 {new Date(message.created_at).toLocaleString()}
               </TableCell>
-              <TableCell className="text-muted-foreground">—</TableCell>
+              <TableCell>
+                <EmployeeActionPlanCell
+                  content={message.content}
+                  actionPlan={message.action_plan}
+                  actionPlanStatus={message.action_plan_status}
+                />
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>

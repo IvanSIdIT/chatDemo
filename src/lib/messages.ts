@@ -40,7 +40,7 @@ export async function sendEmployeeMessage(content: string): Promise<EmployeeMess
   const { data, error } = await supabase
     .from("employee_messages")
     .insert(payload)
-    .select("id, employee_id, content, status, created_at")
+    .select("id, employee_id, content, status, action_plan, action_plan_status, created_at")
     .single();
 
   if (error) {
@@ -59,7 +59,7 @@ export async function sendEmployeeMessage(content: string): Promise<EmployeeMess
 export async function fetchWorkerMessages(): Promise<EmployeeMessage[]> {
   const { data, error } = await supabase
     .from("employee_messages")
-    .select("id, employee_id, content, status, created_at")
+    .select("id, employee_id, content, status, action_plan, action_plan_status, created_at")
     .order("created_at", { ascending: true });
 
   if (error) {
@@ -72,7 +72,7 @@ export async function fetchWorkerMessages(): Promise<EmployeeMessage[]> {
 export async function fetchManagerMessages(): Promise<EmployeeMessageWithEmail[]> {
   const { data: messages, error: messagesError } = await supabase
     .from("employee_messages")
-    .select("id, employee_id, content, status, created_at")
+    .select("id, employee_id, content, status, action_plan, action_plan_status, created_at")
     .order("created_at", { ascending: false });
 
   if (messagesError) {
@@ -104,6 +104,7 @@ export async function fetchManagerMessages(): Promise<EmployeeMessageWithEmail[]
 
 export function subscribeToEmployeeMessages(
   onInsert: (message: EmployeeMessage) => void,
+  onUpdate?: (message: EmployeeMessage) => void,
   onError?: (error: Error) => void,
   onSubscribed?: () => void,
 ) {
@@ -122,6 +123,21 @@ export function subscribeToEmployeeMessages(
           return;
         }
         onInsert(message);
+      },
+    )
+    .on(
+      "postgres_changes",
+      {
+        event: "UPDATE",
+        schema: "public",
+        table: "employee_messages",
+      },
+      (payload) => {
+        const message = payload.new as EmployeeMessage;
+        if (!isEmployeeRequestMessage(message)) {
+          return;
+        }
+        onUpdate?.(message);
       },
     )
     .subscribe((status, err) => {

@@ -1,5 +1,6 @@
 export type UserRole = "worker" | "manager";
 export type MessageStatus = "pending" | "reviewed";
+export type ActionPlanStatus = "none" | "generating" | "ready" | "failed";
 
 export type Database = {
   public: {
@@ -31,6 +32,8 @@ export type Database = {
           employee_id: string;
           content: string;
           status: MessageStatus;
+          action_plan: string | null;
+          action_plan_status: ActionPlanStatus;
           created_at: string;
         };
         Insert: {
@@ -38,6 +41,8 @@ export type Database = {
           employee_id?: string;
           content: string;
           status?: MessageStatus;
+          action_plan?: string | null;
+          action_plan_status?: ActionPlanStatus;
           created_at?: string;
         };
         Update: {
@@ -45,6 +50,8 @@ export type Database = {
           employee_id?: string;
           content?: string;
           status?: MessageStatus;
+          action_plan?: string | null;
+          action_plan_status?: ActionPlanStatus;
           created_at?: string;
         };
         Relationships: [];

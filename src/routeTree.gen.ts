@@ -16,6 +16,7 @@ import { Route as ApiChatRouteImport } from './routes/api/chat'
 import { Route as ApiWorkerUploadAttachmentPrepareRouteImport } from './routes/api/worker/upload-attachment-prepare'
 import { Route as ApiWorkerUploadAttachmentRouteImport } from './routes/api/worker/upload-attachment'
 import { Route as ApiWorkerAttachmentDownloadRouteImport } from './routes/api/worker/attachment-download'
+import { Route as ApiInternalGenerateActionPlanRouteImport } from './routes/api/internal/generate-action-plan'
 import { Route as ApiAnalyticsUsageRouteImport } from './routes/api/analytics/usage'
 import { Route as ApiAdminUploadKnowledgePrepareRouteImport } from './routes/api/admin/upload-knowledge-prepare'
 import { Route as ApiAdminUploadKnowledgeRouteImport } from './routes/api/admin/upload-knowledge'
@@ -59,6 +60,12 @@ const ApiWorkerAttachmentDownloadRoute =
     path: '/api/worker/attachment-download',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiInternalGenerateActionPlanRoute =
+  ApiInternalGenerateActionPlanRouteImport.update({
+    id: '/api/internal/generate-action-plan',
+    path: '/api/internal/generate-action-plan',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiAnalyticsUsageRoute = ApiAnalyticsUsageRouteImport.update({
   id: '/api/analytics/usage',
   path: '/api/analytics/usage',
@@ -91,6 +98,7 @@ export interface FileRoutesByFullPath {
   '/api/admin/upload-knowledge': typeof ApiAdminUploadKnowledgeRoute
   '/api/admin/upload-knowledge-prepare': typeof ApiAdminUploadKnowledgePrepareRoute
   '/api/analytics/usage': typeof ApiAnalyticsUsageRoute
+  '/api/internal/generate-action-plan': typeof ApiInternalGenerateActionPlanRoute
   '/api/worker/attachment-download': typeof ApiWorkerAttachmentDownloadRoute
   '/api/worker/upload-attachment': typeof ApiWorkerUploadAttachmentRoute
   '/api/worker/upload-attachment-prepare': typeof ApiWorkerUploadAttachmentPrepareRoute
@@ -104,6 +112,7 @@ export interface FileRoutesByTo {
   '/api/admin/upload-knowledge': typeof ApiAdminUploadKnowledgeRoute
   '/api/admin/upload-knowledge-prepare': typeof ApiAdminUploadKnowledgePrepareRoute
   '/api/analytics/usage': typeof ApiAnalyticsUsageRoute
+  '/api/internal/generate-action-plan': typeof ApiInternalGenerateActionPlanRoute
   '/api/worker/attachment-download': typeof ApiWorkerAttachmentDownloadRoute
   '/api/worker/upload-attachment': typeof ApiWorkerUploadAttachmentRoute
   '/api/worker/upload-attachment-prepare': typeof ApiWorkerUploadAttachmentPrepareRoute
@@ -118,6 +127,7 @@ export interface FileRoutesById {
   '/api/admin/upload-knowledge': typeof ApiAdminUploadKnowledgeRoute
   '/api/admin/upload-knowledge-prepare': typeof ApiAdminUploadKnowledgePrepareRoute
   '/api/analytics/usage': typeof ApiAnalyticsUsageRoute
+  '/api/internal/generate-action-plan': typeof ApiInternalGenerateActionPlanRoute
   '/api/worker/attachment-download': typeof ApiWorkerAttachmentDownloadRoute
   '/api/worker/upload-attachment': typeof ApiWorkerUploadAttachmentRoute
   '/api/worker/upload-attachment-prepare': typeof ApiWorkerUploadAttachmentPrepareRoute
@@ -133,6 +143,7 @@ export interface FileRouteTypes {
     | '/api/admin/upload-knowledge'
     | '/api/admin/upload-knowledge-prepare'
     | '/api/analytics/usage'
+    | '/api/internal/generate-action-plan'
     | '/api/worker/attachment-download'
     | '/api/worker/upload-attachment'
     | '/api/worker/upload-attachment-prepare'
@@ -146,6 +157,7 @@ export interface FileRouteTypes {
     | '/api/admin/upload-knowledge'
     | '/api/admin/upload-knowledge-prepare'
     | '/api/analytics/usage'
+    | '/api/internal/generate-action-plan'
     | '/api/worker/attachment-download'
     | '/api/worker/upload-attachment'
     | '/api/worker/upload-attachment-prepare'
@@ -159,6 +171,7 @@ export interface FileRouteTypes {
     | '/api/admin/upload-knowledge'
     | '/api/admin/upload-knowledge-prepare'
     | '/api/analytics/usage'
+    | '/api/internal/generate-action-plan'
     | '/api/worker/attachment-download'
     | '/api/worker/upload-attachment'
     | '/api/worker/upload-attachment-prepare'
@@ -173,6 +186,7 @@ export interface RootRouteChildren {
   ApiAdminUploadKnowledgeRoute: typeof ApiAdminUploadKnowledgeRoute
   ApiAdminUploadKnowledgePrepareRoute: typeof ApiAdminUploadKnowledgePrepareRoute
   ApiAnalyticsUsageRoute: typeof ApiAnalyticsUsageRoute
+  ApiInternalGenerateActionPlanRoute: typeof ApiInternalGenerateActionPlanRoute
   ApiWorkerAttachmentDownloadRoute: typeof ApiWorkerAttachmentDownloadRoute
   ApiWorkerUploadAttachmentRoute: typeof ApiWorkerUploadAttachmentRoute
   ApiWorkerUploadAttachmentPrepareRoute: typeof ApiWorkerUploadAttachmentPrepareRoute
@@ -229,6 +243,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiWorkerAttachmentDownloadRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/internal/generate-action-plan': {
+      id: '/api/internal/generate-action-plan'
+      path: '/api/internal/generate-action-plan'
+      fullPath: '/api/internal/generate-action-plan'
+      preLoaderRoute: typeof ApiInternalGenerateActionPlanRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/analytics/usage': {
       id: '/api/analytics/usage'
       path: '/api/analytics/usage'
@@ -269,6 +290,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAdminUploadKnowledgeRoute: ApiAdminUploadKnowledgeRoute,
   ApiAdminUploadKnowledgePrepareRoute: ApiAdminUploadKnowledgePrepareRoute,
   ApiAnalyticsUsageRoute: ApiAnalyticsUsageRoute,
+  ApiInternalGenerateActionPlanRoute: ApiInternalGenerateActionPlanRoute,
   ApiWorkerAttachmentDownloadRoute: ApiWorkerAttachmentDownloadRoute,
   ApiWorkerUploadAttachmentRoute: ApiWorkerUploadAttachmentRoute,
   ApiWorkerUploadAttachmentPrepareRoute: ApiWorkerUploadAttachmentPrepareRoute,

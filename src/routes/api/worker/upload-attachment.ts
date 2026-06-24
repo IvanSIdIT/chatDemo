@@ -3,6 +3,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import { requireWorkerRequest } from "@/lib/api-auth";
 import { saveEmployeeMessage } from "@/lib/chat-persistence";
 import {
+  markActionPlanGenerating,
+  triggerIncidentActionPlanGeneration,
+} from "@/lib/incident-action-plan";
+import {
   formatWorkerPdfMessage,
   isValidWorkerAttachmentPath,
   sanitizeWorkerPdfFilename,
@@ -56,10 +60,26 @@ export const Route = createFileRoute("/api/worker/upload-attachment")({
             });
           }
 
-          return new Response(JSON.stringify({ message }), {
-            status: 201,
-            headers: { "Content-Type": "application/json" },
-          });
+          try {
+            await markActionPlanGenerating(message.id);
+          } catch (statusError) {
+            console.error("[api/worker/upload-attachment] failed to mark action plan generating:", statusError);
+          }
+
+          triggerIncidentActionPlanGeneration(request.url, message.id);
+
+          return new Response(
+            JSON.stringify({
+              message: {
+                ...message,
+                action_plan_status: "generating",
+              },
+            }),
+            {
+              status: 201,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
         } catch (error) {
           const message = error instanceof Error ? error.message : "Failed to send PDF attachment.";
           console.error("[api/worker/upload-attachment] failed:", error);
