@@ -78,6 +78,10 @@ export async function generateIncidentActionPlan(messageId: string): Promise<str
     .eq("id", messageId)
     .single();
 
+  if (messageError && isMissingActionPlanColumnsError(messageError)) {
+    throw new Error("Action plan columns are not available. Apply the latest Supabase migration.");
+  }
+
   if (messageError || !message) {
     throw new Error(messageError?.message ?? "Message not found.");
   }
@@ -140,10 +144,14 @@ export async function generateIncidentActionPlan(messageId: string): Promise<str
   } catch (error) {
     console.error("[action-plan] generation failed:", error);
 
-    await supabase
+    const { error: failedStatusError } = await supabase
       .from("employee_messages")
       .update({ action_plan_status: "failed" })
       .eq("id", messageId);
+
+    if (failedStatusError && !isMissingActionPlanColumnsError(failedStatusError)) {
+      console.error("[action-plan] failed to mark generation as failed:", failedStatusError);
+    }
 
     throw error;
   }

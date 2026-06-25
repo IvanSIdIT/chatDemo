@@ -3,8 +3,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { requireWorkerRequest } from "@/lib/api-auth";
 import { saveEmployeeMessage } from "@/lib/chat-persistence";
 import {
+  generateIncidentActionPlan,
   markActionPlanGenerating,
-  triggerIncidentActionPlanGeneration,
 } from "@/lib/incident-action-plan";
 import {
   formatWorkerPdfMessage,
@@ -66,7 +66,14 @@ export const Route = createFileRoute("/api/worker/upload-attachment")({
             console.error("[api/worker/upload-attachment] failed to mark action plan generating:", statusError);
           }
 
-          triggerIncidentActionPlanGeneration(request.url, message.id);
+          try {
+            await generateIncidentActionPlan(message.id);
+          } catch (generationError) {
+            console.error(
+              "[api/worker/upload-attachment] failed to generate action plan:",
+              generationError,
+            );
+          }
 
           return new Response(
             JSON.stringify({
