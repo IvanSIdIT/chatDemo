@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { ManagerDashboard } from "@/components/ManagerDashboard";
 import { IngestedDocumentsList } from "@/components/IngestedDocumentsList";
 import { RagUploadForm } from "@/components/RagUploadForm";
+import { RouteSectionErrorBoundary } from "@/components/RouteSectionErrorBoundary";
 import { UsageAnalyticsChart } from "@/components/UsageAnalyticsChart";
 import { requireRole, signOut } from "@/lib/auth";
 
@@ -35,11 +36,19 @@ function ManagerPage() {
 
       <main className="mx-auto w-full max-w-6xl flex-1 space-y-6 px-4 py-6 sm:px-6">
         <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
-          <RagUploadForm />
-          <IngestedDocumentsList />
+          <RouteSectionErrorBoundary title="RAG knowledge upload">
+            <RagUploadForm />
+          </RouteSectionErrorBoundary>
+          <RouteSectionErrorBoundary title="Uploaded knowledge documents">
+            <IngestedDocumentsList />
+          </RouteSectionErrorBoundary>
         </div>
-        <UsageAnalyticsChart />
-        <ManagerDashboard />
+        <RouteSectionErrorBoundary title="Usage analytics">
+          <UsageAnalyticsChart />
+        </RouteSectionErrorBoundary>
+        <RouteSectionErrorBoundary title="Employee messages">
+          <ManagerDashboard />
+        </RouteSectionErrorBoundary>
       </main>
     </div>
   );
